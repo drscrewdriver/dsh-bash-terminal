@@ -120,6 +120,13 @@ const gitbashUnconfined = await registered.execute({ command: "echo hi", descrip
 assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "gitbash not confined (Cygwin/MSYS2 incompatibility)");
 assert.strictEqual(gitbashUnconfined.sandbox.enforcement, "gitbash-unconfined");
 
+// 8b) sandbox: read-only + msys2 -> NOT confined (Cygwin/MSYS2 cannot run under restricted token)
+userDefaultShell = "msys2";
+spawnCalls.length = 0;
+const msys2Unconfined = await registered.execute({ command: "ls", description: "t" }, exec);
+assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "msys2 not confined (Cygwin/MSYS2 incompatibility)");
+assert.strictEqual(msys2Unconfined.sandbox.enforcement, "msys2-unconfined");
+
 // 9) sandbox escalation: sandbox_permissions + justification widens policy
 userDefaultShell = "powershell";
 sandboxMode = "read-only";

@@ -1,11 +1,12 @@
 
-import { buildArgv, buildEnv, candidateGitBashPaths, candidatePwshPaths, internals } from "../lib/index.js";
+import { buildArgv, buildEnv, candidateGitBashPaths, candidateMsys2Paths, candidatePwshPaths, internals } from "../lib/index.js";
 const { renderResult, resolveAllPaths, validateArgs } = internals;
 import assert from "node:assert";
 
-const paths = { pwsh: "C:\\pwsh.exe", gitbash: "C:\\Git\\bin\\bash.exe", wsl: "C:\\Windows\\System32\\wsl.exe" };
+const paths = { pwsh: "C:\\pwsh.exe", gitbash: "C:\\Git\\bin\\bash.exe", msys2: "C:\\msys64\\msys2.exe", wsl: "C:\\Windows\\System32\\wsl.exe" };
 assert.deepStrictEqual(buildArgv("powershell", "echo hi", paths), ["C:\\pwsh.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "echo hi"]);
 assert.deepStrictEqual(buildArgv("gitbash", "ls", paths), ["C:\\Git\\bin\\bash.exe", "-lc", "ls"]);
+assert.deepStrictEqual(buildArgv("msys2", "make all", paths), ["C:\\msys64\\msys2.exe", "-c", "make all"]);
 assert.deepStrictEqual(buildArgv("wsl", "pwd", paths, undefined), ["C:\\Windows\\System32\\wsl.exe", "-e", "bash", "-lc", "pwd"]);
 assert.deepStrictEqual(buildArgv("wsl", "pwd", paths, "Ubuntu"), ["C:\\Windows\\System32\\wsl.exe", "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.throws(() => buildArgv("fish", "x", paths));
@@ -27,10 +28,14 @@ const real = resolveAllPaths({}, process.env);
 console.log("resolved paths:", JSON.stringify(real));
 assert.ok(real.pwsh, "pwsh should resolve");
 assert.ok(real.gitbash && real.gitbash.toLowerCase().includes("git"), "gitbash should resolve: " + real.gitbash);
+assert.ok(real.msys2 || real.msys2 === undefined, "msys2 may or may not resolve");
 assert.ok(real.wsl, "wsl should resolve");
 
 const cgb = candidateGitBashPaths({ ...process.env, PATH: "C:\\Windows\\System32;C:\\Program Files\\Git\\bin" });
 assert.ok(!cgb.some((p) => p.toLowerCase().includes("system32")), "system32 bash excluded");
+
+const cms = candidateMsys2Paths({ ...process.env, PATH: "C:\\msys64\\usr\\bin;C:\\mingw64\\bin" });
+assert.ok(cms.some((p) => p.toLowerCase().includes("msys64")), "msys64 paths included");
 
 validateArgs({ command: "ls", description: "list" });
 assert.throws(() => validateArgs({ command: "  ", description: "x" }));
