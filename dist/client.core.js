@@ -23,7 +23,7 @@ __export(client_exports, {
   inject: () => inject
 });
 module.exports = __toCommonJS(client_exports);
-var import_client = require("@deepseek-ai/dsh-client-runtime/client");
+var import_dsh_client_store = require("@deepseek-ai/dsh-client-store");
 var import_jsx_runtime = require("react/jsx-runtime");
 var SETTINGS_NS = "settings.bash-terminal";
 var SETTINGS_NAMESPACE = "bash-terminal";
@@ -91,7 +91,7 @@ function ShellPreferenceRow({ t, useStore, setShell }) {
 function apply(ctx) {
   ctx.effect(() => ctx.locale.register(SETTINGS_NS, { zh, en }), "bash-terminal: settings dictionaries");
   const scope = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE });
-  const store = (0, import_client.defineStore)({
+  const store = (0, import_dsh_client_store.defineStore)({
     init: () => ({ shell: "powershell", revision: -1, writable: false }),
     actions: {
       sync: (d, shell, revision, writable) => {

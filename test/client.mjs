@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import assert from "node:assert";
 const profileRequire = createRequire("C:/Users/10045/.dsh/profiles/web/package.json");
 
-// --- mock defineStore (shape mirrors dsh-client-runtime: { spec, create }) ---
+// --- mock defineStore (shape mirrors dsh-client-store: { spec, create }) ---
 const mockDefineStore = (decl) => ({
   spec: decl,
   create: () => {
@@ -54,7 +54,7 @@ globalThis.window = {
     load: ({ id, factory }) => {
       assert.strictEqual(id, "dsh-bash-terminal");
       exported = factory((name) => {
-        if (name === "@deepseek-ai/dsh-client-runtime/client") return { defineStore: mockDefineStore };
+        if (name === "@deepseek-ai/dsh-client-store") return { defineStore: mockDefineStore };
         if (name === "react/jsx-runtime" || name === "react") return profileRequire(name);
         throw new Error("unexpected require: " + name);
       });

@@ -5,6 +5,7 @@ import assert from "node:assert";
 let registered = null;
 let userDefaultShell = "powershell"; // what the user picked in the Web UI
 let sandboxMode = "danger-full-access"; // per-call sandbox policy mode
+let assembleCallbacks = [];
 const ctx = {
   logger: { info: () => {} },
   systemPrompt: { section: (s) => { assert.ok(s.name === "tool:bash-terminal"); } },
@@ -25,7 +26,9 @@ const ctx = {
     confine: (argv, policy) => ({ argv: ["sandbox-runner", "--", ...argv], enforcement: "full" })
   },
   get: (key) => key === "approval" ? { request: async () => "allowed-once" } : undefined,
-  subprocess: null
+  subprocess: null,
+  effect: (fn) => fn(),
+  on: (event, fn) => { if (event === "system-prompt/assemble") assembleCallbacks.push(fn); }
 };
 apply(ctx, {});
 assert.ok(registered, "tool registered");
@@ -72,7 +75,9 @@ assert.deepStrictEqual(spawnCalls[0].argv.slice(0, 2), ["C:\\Program Files\\Git\
 userDefaultShell = "wsl";
 spawnCalls.length = 0;
 await registered.execute({ command: "pwd", description: "t", distro: "Ubuntu", workdir: "projects" }, exec);
-assert.deepStrictEqual(spawnCalls[0].argv, ["C:\\WINDOWS\\System32\\wsl.exe", "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
+const wslPath = spawnCalls[0].argv[0];
+assert.ok(wslPath.toLowerCase().endsWith("wsl.exe"), "wsl path");
+assert.deepStrictEqual(spawnCalls[0].argv.slice(1), ["-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.strictEqual(spawnCalls[0].cwd, "D:\\WorkSpace\\projects");
 assert.ok(spawnCalls[0].env.WSLENV.includes("DSH_WEB_URL"), "WSLENV should carry DSH vars");
 
@@ -108,11 +113,12 @@ const wslConfined = await registered.execute({ command: "echo hi", description: 
 assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "wsl not confined");
 assert.strictEqual(wslConfined.sandbox.enforcement, "wsl-isolation");
 
-// 8) sandbox: read-only + gitbash -> confined
+// 8) sandbox: read-only + gitbash -> NOT confined (Cygwin/MSYS2 cannot run under restricted token)
 userDefaultShell = "gitbash";
 spawnCalls.length = 0;
-await registered.execute({ command: "echo hi", description: "t" }, exec);
-assert.strictEqual(spawnCalls[0].argv[0], "sandbox-runner", "gitbash confined under read-only");
+const gitbashUnconfined = await registered.execute({ command: "echo hi", description: "t" }, exec);
+assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "gitbash not confined (Cygwin/MSYS2 incompatibility)");
+assert.strictEqual(gitbashUnconfined.sandbox.enforcement, "gitbash-unconfined");
 
 // 9) sandbox escalation: sandbox_permissions + justification widens policy
 userDefaultShell = "powershell";
@@ -129,9 +135,9 @@ await assert.rejects(() => registered.execute({ command: "x", description: "t", 
 assert.ok(registered.parameters.properties.sandbox_permissions, "sandbox_permissions advertised");
 assert.deepStrictEqual(registered.parameters.properties.sandbox_permissions.enum, ["workspace-write", "danger-full-access"]);
 
-// 12) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection
+// 12) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection (powershell)
 sandboxMode = "read-only";
-userDefaultShell = "gitbash";
+userDefaultShell = "powershell";
 const realConfine = ctx.sandbox.confine;
 ctx.sandbox.confine = () => { throw new Error("sandbox mode \"read-only\" is requested but no sandbox backend is usable on this host"); };
 await assert.rejects(() => registered.execute({ command: "x", description: "t" }, exec), /no sandbox backend/);

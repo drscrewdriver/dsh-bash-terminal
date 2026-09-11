@@ -2,7 +2,7 @@
 // Web UI General settings. The user picks powershell / gitbash / wsl; the host
 // shell tool obeys that choice (the model cannot change it).
 
-import { defineStore } from "@deepseek-ai/dsh-client-runtime/client";
+import { defineStore } from "@deepseek-ai/dsh-client-store";
 
 const SETTINGS_NS = "settings.bash-terminal";
 const SETTINGS_NAMESPACE = "bash-terminal";
