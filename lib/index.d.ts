@@ -31,9 +31,17 @@ export declare function candidatePwshPaths(env?: NodeJS.ProcessEnv): string[];
  */
 export declare function candidateGitBashPaths(env?: NodeJS.ProcessEnv): string[];
 /**
- * MSYS2 locations: C:\\msys64 by default (msys2.exe -> bash.exe, or usr\\bin\\bash.exe),
- * then PATH bash.exe entries. MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash,
- * so it cannot run under the DSH Windows ACL restricted-token sandbox.
+ * MSYS2 locations, in preference order: the real `bash.exe` under usr\bin first,
+ * then bin\bash.exe, and `msys2.exe` dead last.
+ *
+ * msys2.exe is NOT a usable backend for piped execution: it is the console-
+ * allocating Cygwin launcher, so a spawn with piped stdio returns exit 0 with
+ * zero bytes on both stdout and stderr (measured on MSYS2 with bash 5.3.15).
+ * Keeping it in the list only as a last-resort fallback preserves the path the
+ * config docs reference, but a working bash.exe always wins.
+ *
+ * MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash, so it cannot run under
+ * the DSH Windows ACL restricted-token sandbox.
  */
 export declare function candidateMsys2Paths(env?: NodeJS.ProcessEnv): string[];
 export declare function defaultWslPath(env?: NodeJS.ProcessEnv): string;

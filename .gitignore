@@ -12,3 +12,6 @@ package-lock.json
 
 # typescript build output (test runners)
 test-dist/
+
+# git worktrees used for parallel branch work
+.worktrees/

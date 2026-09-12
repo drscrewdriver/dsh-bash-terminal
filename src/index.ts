@@ -157,21 +157,28 @@ export function candidateGitBashPaths(env: NodeJS.ProcessEnv = process.env): str
 }
 
 /**
- * MSYS2 locations: C:\\msys64 by default (msys2.exe -> bash.exe, or usr\\bin\\bash.exe),
- * then PATH bash.exe entries. MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash,
- * so it cannot run under the DSH Windows ACL restricted-token sandbox.
+ * MSYS2 locations, in preference order: the real `bash.exe` under usr\bin first,
+ * then bin\bash.exe, and `msys2.exe` dead last.
+ *
+ * msys2.exe is NOT a usable backend for piped execution: it is the console-
+ * allocating Cygwin launcher, so a spawn with piped stdio returns exit 0 with
+ * zero bytes on both stdout and stderr (measured on MSYS2 with bash 5.3.15).
+ * Keeping it in the list only as a last-resort fallback preserves the path the
+ * config docs reference, but a working bash.exe always wins.
+ *
+ * MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash, so it cannot run under
+ * the DSH Windows ACL restricted-token sandbox.
  */
 export function candidateMsys2Paths(env: NodeJS.ProcessEnv = process.env): string[] {
   const programFiles = env.ProgramFiles ?? "C:\\Program Files";
   const candidates = [
-    "C:\\msys64\\msys2.exe",
     "C:\\msys64\\usr\\bin\\bash.exe",
     "C:\\msys64\\bin\\bash.exe"
   ];
   // Also check 32-bit variant
   const programFilesX86 = env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
   if (programFilesX86 !== programFiles) {
-    candidates.push("C:\\msys64\\msys2.exe"); // same path regardless of arch
+    candidates.push("C:\\msys64\\usr\\bin\\bash.exe"); // same path regardless of arch
   }
   for (const entry of (env.PATH ?? "").split(";")) {
     const trimmed = entry.trim().replace(/^"|"$/g, "");
@@ -180,6 +187,7 @@ export function candidateMsys2Paths(env: NodeJS.ProcessEnv = process.env): strin
       candidates.push(join(trimmed, "bash.exe"));
     }
   }
+  candidates.push("C:\\msys64\\msys2.exe"); // last resort: see the note above
   return candidates;
 }
 
@@ -223,7 +231,10 @@ export function buildArgv(
     case "gitbash":
       return [paths.gitbash, "-lc", command];
     case "msys2":
-      return [paths.msys2, "-c", command];
+      // -lc, not -c: a login shell sources /etc/profile, which is what puts
+      // /usr/bin and /mingw64/bin on PATH. With a bare -c, `tr`, `sed`, `gcc`
+      // and friends are all "command not found".
+      return [paths.msys2, "-lc", command];
     case "wsl": {
       const distroArg = distro !== undefined && distro.trim().length > 0 ? ["-d", distro.trim()] : [];
       return [paths.wsl, ...distroArg, "-e", "bash", "-lc", command];
@@ -240,6 +251,11 @@ export function buildArgv(
  */
 export function buildEnv(shell: string, dshEnv?: Record<string, string>): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...ENV_OVERRIDES, ...dshEnv };
+  if (shell === "msys2") {
+    // Picks the MINGW64 environment, so /mingw64/bin (gcc, make, ...) joins PATH
+    // via /etc/profile. Without it MSYS2 defaults to the bare MSYS environment.
+    if (env.MSYSTEM === undefined) env.MSYSTEM = "MINGW64";
+  }
   if (shell === "wsl") {
     const keys = Object.keys(dshEnv ?? {});
     if (keys.length > 0) {
@@ -485,7 +501,7 @@ function renderProcessRead(read: ProcessRead): string {
 export const SHELL_DESCRIPTIONS: Record<ShellId, string> = {
   powershell: "Execute a PowerShell command (pwsh -NoLogo -NoProfile -NonInteractive -Command <command>) and return its stdout/stderr. PowerShell syntax; native Windows paths (C:\\...); environment variables via $env:NAME.",
   gitbash: "Execute a bash command (Git for Windows bash -lc <command>) and return its stdout/stderr. POSIX syntax; paths like /d/WorkSpace; PATH includes /usr/bin and /mingw64/bin so git, npm, ssh etc. work; environment variables via $NAME.",
-  msys2: "Execute a bash command (C:\\msys64\\msys2.exe -c <command>) and return its stdout/stderr. POSIX syntax; paths like /c/...; PATH includes /usr/bin and /mingw64/bin so git, npm, gcc, make etc. work; environment variables via $NAME. MSYS2 provides a full GCC/mingw64 toolchain.",
+  msys2: "Execute a bash command (MSYS2 bash -lc <command>) and return its stdout/stderr. POSIX syntax; paths like /c/...; PATH includes /usr/bin and /mingw64/bin so git, npm, gcc, make etc. work; environment variables via $NAME. MSYS2 provides a full GCC/mingw64 toolchain.",
   wsl: "Execute a Linux bash command (wsl [-d <distro>] -e bash -lc <command>) and return its stdout/stderr. Linux syntax; Windows files under /mnt/d/...; environment variables via $NAME."
 };
 

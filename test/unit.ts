@@ -6,7 +6,9 @@ import assert from "node:assert";
 const paths = { pwsh: "C:\\pwsh.exe", gitbash: "C:\\Git\\bin\\bash.exe", msys2: "C:\\msys64\\msys2.exe", wsl: "C:\\Windows\\System32\\wsl.exe" };
 assert.deepStrictEqual(buildArgv("powershell", "echo hi", paths), ["C:\\pwsh.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "echo hi"]);
 assert.deepStrictEqual(buildArgv("gitbash", "ls", paths), ["C:\\Git\\bin\\bash.exe", "-lc", "ls"]);
-assert.deepStrictEqual(buildArgv("msys2", "make all", paths), ["C:\\msys64\\msys2.exe", "-c", "make all"]);
+// msys2 must use -lc: a login shell is what sources /etc/profile and puts
+// /usr/bin + /mingw64/bin on PATH. With a bare -c every coreutil is missing.
+assert.deepStrictEqual(buildArgv("msys2", "make all", paths), ["C:\\msys64\\msys2.exe", "-lc", "make all"]);
 assert.deepStrictEqual(buildArgv("wsl", "pwd", paths, undefined), ["C:\\Windows\\System32\\wsl.exe", "-e", "bash", "-lc", "pwd"]);
 assert.deepStrictEqual(buildArgv("wsl", "pwd", paths, "Ubuntu"), ["C:\\Windows\\System32\\wsl.exe", "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.throws(() => buildArgv("fish", "x", paths));
@@ -14,6 +16,10 @@ assert.throws(() => buildArgv("fish", "x", paths));
 const env = buildEnv("gitbash", { DSH_WEB_URL: "http://127.0.0.1:3080" });
 assert.strictEqual(env.DSH_WEB_URL, "http://127.0.0.1:3080");
 assert.strictEqual(env.NO_COLOR, "1");
+// MSYS2 needs MSYSTEM so /etc/profile selects the MINGW64 toolchain.
+assert.strictEqual(buildEnv("msys2", undefined).MSYSTEM, "MINGW64");
+assert.strictEqual(buildEnv("msys2", { MSYSTEM: "CLANG64" }).MSYSTEM, "CLANG64", "explicit MSYSTEM wins");
+assert.strictEqual(buildEnv("gitbash", undefined).MSYSTEM, undefined, "MSYSTEM only set for msys2");
 const wslEnv = buildEnv("wsl", { DSH_WEB_URL: "http://x", DSH_TEST: "1" });
 assert.ok(wslEnv.WSLENV!.includes("DSH_WEB_URL"));
 assert.ok(wslEnv.WSLENV!.includes("DSH_TEST"));
@@ -36,6 +42,16 @@ assert.ok(!cgb.some((p) => p.toLowerCase().includes("system32")), "system32 bash
 
 const cms = candidateMsys2Paths({ ...process.env, PATH: "C:\\msys64\\usr\\bin;C:\\mingw64\\bin" });
 assert.ok(cms.some((p) => p.toLowerCase().includes("msys64")), "msys64 paths included");
+// msys2.exe is a piped-stdio dead end (exit 0, no output), so a real bash.exe
+// must always outrank it.
+const bashIdx = cms.findIndex((p) => p.toLowerCase().endsWith("bash.exe"));
+const exeIdx = cms.findIndex((p) => p.toLowerCase().endsWith("msys2.exe"));
+assert.ok(bashIdx !== -1, "a bash.exe candidate exists");
+assert.ok(exeIdx === -1 || bashIdx < exeIdx, `bash.exe must precede msys2.exe (bash=${bashIdx}, exe=${exeIdx})`);
+assert.ok(
+  resolveAllPaths({}, process.env).msys2?.toLowerCase().endsWith("bash.exe") ?? true,
+  "resolved msys2 backend must be bash.exe, not msys2.exe: " + resolveAllPaths({}, process.env).msys2
+);
 
 // candidatePwshPaths is exercised for parity with the JS baseline.
 assert.ok(candidatePwshPaths({}).length > 0, "pwsh candidates produced");
