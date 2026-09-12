@@ -46,7 +46,8 @@
     "tsconfig.client.json",
     "tsconfig.test.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "cordis.patch.yml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/build-client.mjs && tsc -p tsconfig.test.json",
@@ -54,6 +55,9 @@
     "test": "node test-dist/unit.js && node test-dist/apply.js && node test-dist/client.js"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
