@@ -1,5 +1,5 @@
 // dsh-bash-terminal client plugin: a "Default terminal" preference row in the
-// Web UI General settings. The user picks powershell / gitbash / wsl; the host
+// Web UI General settings. The user picks powershell / gitbash / msys2 / wsl; the host
 // shell tool obeys that choice (the model cannot change it).
 
 import { defineStore } from "@deepseek-ai/dsh-client-store";
@@ -12,6 +12,7 @@ const zh = {
   "shell.description": "shell 工具执行命令时使用的终端（由你决定，AI 无法更改）",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 const en = {
@@ -19,6 +20,7 @@ const en = {
   "shell.description": "Terminal used by the shell tool (you control this; the AI cannot change it)",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 
@@ -61,6 +63,7 @@ function ShellPreferenceRow({ t, useStore, setShell }) {
       >
         <option value="powershell">{t("shell.powershell")}</option>
         <option value="gitbash">{t("shell.gitbash")}</option>
+        <option value="msys2">{t("shell.msys2")}</option>
         <option value="wsl">{t("shell.wsl")}</option>
       </select>
     </div>

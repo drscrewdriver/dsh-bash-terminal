@@ -3,6 +3,7 @@ window.__ModuleLoader__.load({
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;
+"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -37,6 +38,7 @@ var zh = {
   "shell.description": "shell \u5DE5\u5177\u6267\u884C\u547D\u4EE4\u65F6\u4F7F\u7528\u7684\u7EC8\u7AEF\uFF08\u7531\u4F60\u51B3\u5B9A\uFF0CAI \u65E0\u6CD5\u66F4\u6539\uFF09",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 var en = {
@@ -44,6 +46,7 @@ var en = {
   "shell.description": "Terminal used by the shell tool (you control this; the AI cannot change it)",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 var inject = ["slots", "locale", "settingsScope"];
@@ -85,6 +88,7 @@ function ShellPreferenceRow({ t, useStore, setShell }) {
             children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "powershell", children: t("shell.powershell") }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "gitbash", children: t("shell.gitbash") }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "msys2", children: t("shell.msys2") }),
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "wsl", children: t("shell.wsl") })
             ]
           }
