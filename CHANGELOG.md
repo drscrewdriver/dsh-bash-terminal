@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.16 (2026-09-12)
+
+- **全量 TypeScript 重写**. 服务端 `lib/index.js` / `lib/terminal.js` → `src/index.ts` / `src/terminal.ts`；客户端 `src/client.jsx` → `src/client.tsx`；测试 `test/*.mjs` → `test/*.ts`（编译到 `test-dist/` 运行）。`tsc --strict` + `noUncheckedIndexedAccess` 全绿。
+- 插件自身对 DSH 接缝的契约收敛为手写结构类型（`src/dsh-types.ts`）；peer 包的值导入统一经 `src/dsh.ts` 桥接窄化，peer 版本漂移不再渗入重写代码。
+- 构建链：`npm run build` = `tsc`（服务端 → `lib/`）+ `tsc -p tsconfig.client.json`（client 类型检查）+ esbuild（`src/client.tsx` → `lib/client.js` + `dist/client.js`）+ `tsc -p tsconfig.test.json`。`lib/`、`dist/` 产物继续随仓库提交，DSH 按 `lib/index.js` 加载的路径不变。
+- 导出面逐字保持（`name` / `inject` / `Config` / `apply` / `SHELLS` / `DEFAULT_SHELL` / `SETTINGS_NAMESPACE` / `internals`），运行时行为与 0.3.15 一致；仅去掉了 terminal.js 末尾一个不可达的 `pathResolve` 死函数与未使用的 `MAX_TIMER_DELAY_MS` 导入。
+
 ## 0.3.15 (2026-09-11)
 
 - **适配 DSH 0.1.5-rc.1**. 客户端模块表（`PLATFORM_MODULES`）把 `@deepseek-ai/dsh-client-runtime` 改名为 `@deepseek-ai/dsh-client-store`，并且只按**精确裸名**命中（没有 `/client` 子路径，也没有包工厂兜底）。客户端 bundle 原先 `require("@deepseek-ai/dsh-client-runtime/client")`，在 0.1.5 下必然 miss → Web GUI 启动报 `Failed to load plugins / require(...) missed the module table`。现改为 `@deepseek-ai/dsh-client-store`，bundle 的 4 个 require（`react`、`react/jsx-runtime`、`dsh-client-store`、`dsh-client-ui-primitives`）全部落在平台种子表内，不需要 `dsh.client.external`。

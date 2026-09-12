@@ -13,11 +13,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install deps + build client bundle
-        run: npm install --no-audit --no-fund && npm install react@^18 react-dom@^18 node-pty@^1 --no-save && node scripts/build-client.mjs
+      - name: Install deps + build (tsc + client bundle + test compile)
+        run: npm install --no-audit --no-fund && npm install react@^18 react-dom@^18 node-pty@^1 --no-save && npm run build
       - name: Run unit tests
-        run: node test/unit.mjs
+        run: node test-dist/unit.js
       - name: Run apply/execute mock tests
-        run: node test/apply.mjs
+        run: node test-dist/apply.js
       - name: Run client logic tests
-        run: node test/client.mjs
+        run: node test-dist/client.js
+      - name: Run interactive terminal tests
+        run: node test-dist/terminal.js
