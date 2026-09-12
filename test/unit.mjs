@@ -21,6 +21,20 @@ assert.ok(wslEnv.WSLENV.includes("DSH_WEB_URL"));
 assert.ok(wslEnv.WSLENV.includes("DSH_TEST"));
 assert.strictEqual(buildEnv("wsl", undefined).WSLENV, undefined);
 
+// The inherited WSLENV is the host's allow-list for what crosses into WSL
+// (Windows Terminal exports "WT_SESSION:WT_PROFILE_ID:" on this machine).
+// Rebuilding it from the DSH keys alone dropped those entries; passing the
+// inherited value explicitly keeps these assertions off the ambient env.
+const inherited = "WT_SESSION:WT_PROFILE_ID:";
+const inheritedEnv = buildEnv("wsl", { DSH_WEB_URL: "http://x" }, inherited);
+assert.ok(inheritedEnv.WSLENV.includes("WT_SESSION") && inheritedEnv.WSLENV.includes("WT_PROFILE_ID"), "inherited WSLENV entries preserved");
+assert.ok(inheritedEnv.WSLENV.includes("DSH_WEB_URL"), "DSH keys still appended");
+assert.strictEqual(inheritedEnv.WSLENV, "WT_SESSION:WT_PROFILE_ID:DSH_WEB_URL", "normalised: no empty entry from the trailing ':'");
+// An explicit caller-supplied WSLENV wins over the inherited one.
+const declaredEnv = buildEnv("wsl", { WSLENV: "MINE", DSH_WEB_URL: "http://x" }, inherited);
+assert.strictEqual(declaredEnv.WSLENV, "MINE:DSH_WEB_URL", "explicit WSLENV wins, and WSLENV itself is not re-listed");
+assert.strictEqual(buildEnv("gitbash", { DSH_WEB_URL: "http://x" }, inherited).WSLENV, undefined, "WSLENV is wsl-only");
+
 // msys2 gets MSYSTEM=MINGW64 so /mingw64/bin (gcc, make, ...) joins PATH via
 // /etc/profile; an explicit user value must win.
 assert.strictEqual(buildEnv("msys2", undefined).MSYSTEM, "MINGW64");
