@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { TOOL_ABORTED, defineTool, HarnessError } from "./dsh.js";
+import { buildEnv } from "./index.js";
 import type {
   BashTerminalContext,
   ResolvedPaths,
@@ -238,7 +239,7 @@ export function terminalTool(
 ) {
   return defineTool<TerminalToolResult>({
     name: "terminal",
-    description: "Interactive terminal session over the user's default terminal (Settings -> General -> Default terminal: powershell / gitbash / wsl). A real PTY hosts a persistent shell: open a session, send input and read output across turns, deliver signals (Ctrl+C = SIGINT) to the foreground process, and close when done. Backend and env follow the shell tool exactly; the session survives between calls until closed. Use this for interactive programs (REPLs, ssh, databases, TUI tools) or when you need shell state (cwd, variables, aliases) to persist across calls.",
+    description: "Interactive terminal session over the user's default terminal (Settings -> General -> Default terminal: powershell / gitbash / msys2 / wsl). A real PTY hosts a persistent shell: open a session, send input and read output across turns, deliver signals (Ctrl+C = SIGINT) to the foreground process, and close when done. Backend and env follow the shell tool exactly; the session survives between calls until closed. Use this for interactive programs (REPLs, ssh, databases, TUI tools) or when you need shell state (cwd, variables, aliases) to persist across calls.",
     parameters: {
       action: {
         type: "string",
@@ -329,7 +330,11 @@ export function terminalTool(
           // Only element 0 (the resolved executable) can be undefined; guarded above.
           const argv = argv0 as string[];
           const cwd = args.workdir !== undefined ? (headerCwd !== undefined && !isAbsolute(args.workdir) ? resolve(headerCwd, args.workdir) : args.workdir) : (headerCwd ?? process.cwd());
-          const env: Record<string, string | undefined> = { NO_COLOR: "1", TERM: "dumb", PAGER: "cat", GIT_PAGER: "cat", ...ctx.shellEnv.collect(exec) };
+          // buildEnv, not an inline duplicate: the msys2 backend needs its
+          // MSYSTEM=MINGW64 injection here too, or the login shell sources
+          // /etc/profile with the default MSYS environment and /mingw64/bin
+          // (gcc, make) never joins PATH.
+          const env = buildEnv(shell, ctx.shellEnv.collect(exec));
           const session = await registry.open({ argv, shell, cwd, env, rows: DEFAULT_ROWS, cols: DEFAULT_COLS, distro: args.distro, initial: args.command !== undefined ? args.command + "\r" : undefined });
           return { kind: "open", sessionId: session.id, pid: session.handle.pid, shell, output: session.buffer.snapshot() };
         }
