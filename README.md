@@ -124,6 +124,13 @@ Remove-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-bash-terminal" 
 
 - WSL 后台进程在超时/中断后可能在发行版内短暂残留（WSL 实例在最后一个进程退出后自动关闭）。
 - Git Bash 是 msys2 环境，与 WSL 的 Linux 行为存在差异（路径映射、包可用性）。
+- MSYS2 后端走 `C:\msys64\usr\bin\bash.exe -lc`，**不是** `C:\msys64\msys2.exe`：
+  `msys2.exe` 是分配控制台窗口的 Cygwin 启动器，在管道 stdio 下（本插件正是这样 spawn 的）
+  会以 exit 0 返回**零字节输出**，命令静默失败。因此把它排在候选列表最后，仅作兜底，
+  可用的 `bash.exe` 永远优先。`-lc`（登录 shell）也不能省：只有 `/etc/profile` 会把
+  `/usr/bin` 与 `/mingw64/bin` 加进 PATH，裸 `-c` 下 `tr`/`sed`/`gcc` 全是 command not found。
+- MSYS2 下会注入 `MSYSTEM=MINGW64`（用户显式设置的值优先），以便 `/etc/profile` 选中
+  MINGW64 环境，让 `/mingw64/bin` 里的 gcc、make 等可用。
 - 本插件仅在 `win32` 平台注册工具。
 
 ## 测试

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.5 (2026-09-12)
+
+- **MSYS2 设置项修复**: MSYS2 此前只加进了服务端，Web UI 的「默认终端」下拉从没出现过它 —— 后端支持而前端选不了。`src/client.tsx` 补上 `msys2` 选项与 `shell.msys2` 双语文案（顺序 powershell / gitbash / msys2 / wsl）。
+- **MSYS2 管道 stdio 修复（后端原本也不可用）**: `C:\msys64\msys2.exe` 是分配控制台窗口的 Cygwin 启动器，在管道 stdio 下以 exit 0 返回零字节输出，任何 MSYS2 命令都会静默失败。改为优先解析 `C:\msys64\usr\bin\bash.exe`，并把 `msys2.exe` 降级为候选列表末尾的兜底项。
+- **MSYS2 登录 shell**: argv 由 `-c` 改为 `-lc`；只有登录 shell 会 source `/etc/profile` 把 `/usr/bin` 与 `/mingw64/bin` 加进 PATH，裸 `-c` 下 `tr`/`sed`/`gcc` 都是 command not found。
+- **MSYS2 环境**: `buildEnv` 注入 `MSYSTEM=MINGW64`（用户显式设置优先），让 `/mingw64/bin` 的 gcc、make 等进入 PATH。
+- **回归防护**: `test/client.ts` 新增漂移守卫 —— 用 `SHELLS` 逐项断言每个后端在 dist/client.js 里都有 `<option>`、且中英文字典都有 `shell.<id>`；`test/unit.ts` 断言 `bash.exe` 必须排在 `msys2.exe` 之前。
+
 ## 0.2.4 (2026-09-12)
 
 - **全量 TypeScript 重写**. 服务端 lib/index.js / lib/terminal.js → src/index.ts / src/terminal.ts；客户端 src/client.jsx → src/client.tsx；测试 test/*.mjs → test/*.ts（编译到 test-dist/ 运行）。tsc strict + noUncheckedIndexedAccess 全绿。
