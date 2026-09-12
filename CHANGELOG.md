@@ -7,6 +7,8 @@
 - **MSYS2 登录 shell**: argv 由 `-c` 改为 `-lc`；只有登录 shell 会 source `/etc/profile` 把 `/usr/bin` 与 `/mingw64/bin` 加进 PATH，裸 `-c` 下 `tr`/`sed`/`gcc` 都是 command not found。
 - **MSYS2 环境**: `buildEnv` 注入 `MSYSTEM=MINGW64`（用户显式设置优先），让 `/mingw64/bin` 的 gcc、make 等进入 PATH。
 - **回归防护**: `test/client.ts` 新增漂移守卫 —— 用 `SHELLS` 逐项断言每个后端在 dist/client.js 里都有 `<option>`、且中英文字典都有 `shell.<id>`；`test/unit.ts` 断言 `bash.exe` 必须排在 `msys2.exe` 之前。
+- **交互终端补齐 MSYSTEM**: `src/terminal.ts` 原本自己内联拼装 PTY 环境变量，绕过了 `buildEnv` 的 `MSYSTEM=MINGW64` 注入 —— 结果是 `shell` 工具正常，但 `terminal` 的 MSYS2 会话在 `/etc/profile` 里落回默认 MSYS 环境，`/mingw64/bin`（gcc、make）不在 PATH 上。改为统一走 `buildEnv`。真实 PTY 实测提示符由 `MSYS` 变为 `MINGW64`，`command -v gcc` 解析到 `/mingw64/bin/gcc`。`test/apply.ts` 新增断言（PTY spec 的 env 必须含 `MSYSTEM=MINGW64`、argv[0] 必须是 `bash.exe`、且 MSYSTEM 不得泄漏到 gitbash），并做了反向验证：把内联 env 改回去后该断言确实失败。
+- **构建可复现**: `scripts/build-client.mjs` 显式 pin `tsconfigRaw`，不再让 esbuild 向上查找 tsconfig。此前在仓库内构建会捡到根 `tsconfig.json` 而多输出一行 `"use strict";`，在仓库外 worktree 构建则没有 —— 同一份源码产出两种产物。pin 后行为不变，仅去掉那行多余的 `"use strict";`。
 
 ## 0.2.4 (2026-09-12)
 

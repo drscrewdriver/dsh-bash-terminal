@@ -11,6 +11,8 @@ import assert from "node:assert";
 
 // ---- mock ctx for apply() ----
 let registered: ToolDefinition | null = null;
+const allRegistered: ToolDefinition[] = [];
+const terminalSpawnSpecs: Record<string, unknown>[] = [];
 let userDefaultShell = "powershell"; // what the user picked in the Web UI
 let sandboxMode = "danger-full-access"; // per-call sandbox policy mode
 const assembleCallbacks: ((assembly: PromptAssembly, context: unknown, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>)[] = [];
@@ -19,7 +21,7 @@ const spawnCalls: SubprocessSpawnSpec[] = [];
 const ctx: BashTerminalContext = {
   logger: { info: () => {} },
   systemPrompt: { section: (s) => { assert.ok(s.name === "tool:bash-terminal"); } },
-  tools: { register: (tool) => { registered = tool; } },
+  tools: { register: (tool) => { registered = tool; allRegistered.push(tool); } },
   shellEnv: { collect: () => ({ DSH_WEB_URL: "http://127.0.0.1:3080" }) },
   settings: {
     register: ((ns: string, schema: unknown, options: { base: unknown }) => {
@@ -56,7 +58,20 @@ const fakeHandle = {
   terminate: () => {}
 };
 ctx.subprocess = {
-  spawn: (spec) => { spawnCalls.push(spec); return fakeHandle; }
+  spawn: (spec) => { spawnCalls.push(spec); return fakeHandle; },
+  // The terminal tool opens PTY sessions through this seam; capture the spec so
+  // the PTY environment can be asserted (it must carry the msys2 MSYSTEM value).
+  spawnTerminal: async (spec) => {
+    terminalSpawnSpecs.push(spec as unknown as Record<string, unknown>);
+    return {
+      pid: 4242,
+      output: { on: () => () => {} } as unknown as NodeJS.ReadableStream,
+      done: Promise.resolve({ exitCode: 0, signal: null }),
+      write: () => {},
+      signalForeground: () => {},
+      terminate: async () => {}
+    };
+  }
 };
 
 const exec: ToolRunContext = { signal: new AbortController().signal, agent: { session: { header: { cwd: "D:/WorkSpace" } } }, callId: "c1" };
@@ -166,5 +181,38 @@ await assert.rejects(() => reg.execute({ command: "", description: "t" }, exec))
 // settings schema rejects an out-of-enum user value
 userDefaultShell = "fish";
 await assert.rejects(() => reg.execute({ command: "x", description: "t" }, exec));
+
+// 13) the PTY path must carry the same backend env as the shell tool.
+// Regression: terminal.ts used to build its env inline, so the msys2 session
+// never received MSYSTEM and /mingw64/bin (gcc, make) was missing from PATH
+// while the shell tool worked fine.
+const terminalTool = allRegistered.find((t) => t.name === "terminal");
+assert.ok(terminalTool, "terminal tool registered alongside the shell tool");
+
+userDefaultShell = "msys2";
+terminalSpawnSpecs.length = 0;
+await terminalTool!.execute({ action: "open" }, exec);
+assert.strictEqual(terminalSpawnSpecs.length, 1, "terminal open reached the PTY seam");
+const msys2PtyEnv = terminalSpawnSpecs[0]!.env as Record<string, string | undefined>;
+assert.strictEqual(
+  msys2PtyEnv.MSYSTEM,
+  "MINGW64",
+  "PTY env for msys2 must inject MSYSTEM=MINGW64 (got " + JSON.stringify(msys2PtyEnv.MSYSTEM) + ")"
+);
+const msys2PtyArgv = terminalSpawnSpecs[0]!.argv as string[];
+assert.ok(
+  String(msys2PtyArgv[0]).toLowerCase().endsWith("bash.exe"),
+  "msys2 PTY must launch bash.exe, not msys2.exe: " + msys2PtyArgv[0]
+);
+
+// MSYSTEM must not leak into the non-msys2 backends' PTY env.
+userDefaultShell = "gitbash";
+terminalSpawnSpecs.length = 0;
+await terminalTool!.execute({ action: "open" }, exec);
+assert.strictEqual(
+  (terminalSpawnSpecs[0]!.env as Record<string, string | undefined>).MSYSTEM,
+  undefined,
+  "MSYSTEM must be msys2-only"
+);
 
 console.log("APPLY/EXECUTE MOCK TESTS PASSED");
