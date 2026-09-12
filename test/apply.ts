@@ -2,7 +2,6 @@ import { apply } from "../lib/index.js";
 import type { ForegroundResult } from "../lib/index.js";
 import type {
   BashTerminalContext,
-  PromptAssembly,
   SubprocessSpawnSpec,
   ToolDefinition,
   ToolRunContext
@@ -13,7 +12,6 @@ import assert from "node:assert";
 let registered: ToolDefinition | null = null;
 let userDefaultShell = "powershell"; // what the user picked in the Web UI
 let sandboxMode = "danger-full-access"; // per-call sandbox policy mode
-const assembleCallbacks: ((assembly: PromptAssembly, context: unknown, next: () => Promise<PromptAssembly>) => Promise<PromptAssembly>)[] = [];
 const spawnCalls: SubprocessSpawnSpec[] = [];
 
 const ctx: BashTerminalContext = {
@@ -36,9 +34,7 @@ const ctx: BashTerminalContext = {
     confine: (argv) => ({ argv: ["sandbox-runner", "--", ...argv], enforcement: "full" })
   },
   get: (key) => key === "approval" ? { request: async () => "allowed-once" } : undefined,
-  subprocess: null,
-  effect: (fn) => fn(),
-  on: (event, fn) => { if (event === "system-prompt/assemble") assembleCallbacks.push(fn); }
+  subprocess: null
 };
 apply(ctx, {});
 assert.ok(registered, "tool registered");
@@ -85,9 +81,9 @@ assert.deepStrictEqual(spawnCalls[0].argv.slice(0, 2), ["C:\\Program Files\\Git\
 userDefaultShell = "wsl";
 spawnCalls.length = 0;
 await reg.execute({ command: "pwd", description: "t", distro: "Ubuntu", workdir: "projects" }, exec);
-const wslPath = spawnCalls[0].argv[0];
-assert.ok(wslPath.toLowerCase().endsWith("wsl.exe"), "wsl path");
-assert.deepStrictEqual(spawnCalls[0].argv.slice(1), ["-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
+// the 0.1.x baseline hardcoded C:\WINDOWS here; derive from SystemRoot instead
+const wslPath = (process.env.SystemRoot ?? "C:\\Windows") + "\\System32\\wsl.exe";
+assert.deepStrictEqual(spawnCalls[0].argv, [wslPath, "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.strictEqual(spawnCalls[0].cwd, "D:\\WorkSpace\\projects");
 assert.ok(spawnCalls[0].env!.WSLENV!.includes("DSH_WEB_URL"), "WSLENV should carry DSH vars");
 
@@ -123,19 +119,11 @@ const wslConfined = await reg.execute({ command: "echo hi", description: "t" }, 
 assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "wsl not confined");
 assert.strictEqual(wslConfined.sandbox!.enforcement, "wsl-isolation");
 
-// 8) sandbox: read-only + gitbash -> NOT confined (Cygwin/MSYS2 cannot run under restricted token)
+// 8) sandbox: read-only + gitbash -> confined (this tier wraps Git Bash too)
 userDefaultShell = "gitbash";
 spawnCalls.length = 0;
-const gitbashUnconfined = await reg.execute({ command: "echo hi", description: "t" }, exec) as ForegroundResult;
-assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "gitbash not confined (Cygwin/MSYS2 incompatibility)");
-assert.strictEqual(gitbashUnconfined.sandbox!.enforcement, "gitbash-unconfined");
-
-// 8b) sandbox: read-only + msys2 -> NOT confined (Cygwin/MSYS2 cannot run under restricted token)
-userDefaultShell = "msys2";
-spawnCalls.length = 0;
-const msys2Unconfined = await reg.execute({ command: "ls", description: "t" }, exec) as ForegroundResult;
-assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "msys2 not confined (Cygwin/MSYS2 incompatibility)");
-assert.strictEqual(msys2Unconfined.sandbox!.enforcement, "msys2-unconfined");
+await reg.execute({ command: "echo hi", description: "t" }, exec);
+assert.strictEqual(spawnCalls[0].argv[0], "sandbox-runner", "gitbash confined under read-only");
 
 // 9) sandbox escalation: sandbox_permissions + justification widens policy
 userDefaultShell = "powershell";
@@ -152,9 +140,9 @@ await assert.rejects(() => reg.execute({ command: "x", description: "t", justifi
 assert.ok(reg.parameters.properties.sandbox_permissions, "sandbox_permissions advertised");
 assert.deepStrictEqual(reg.parameters.properties.sandbox_permissions!.enum, ["workspace-write", "danger-full-access"]);
 
-// 12) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection (powershell)
+// 12) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection
 sandboxMode = "read-only";
-userDefaultShell = "powershell";
+userDefaultShell = "gitbash";
 const realConfine = ctx.sandbox.confine;
 ctx.sandbox.confine = () => { throw new Error("sandbox mode \"read-only\" is requested but no sandbox backend is usable on this host"); };
 await assert.rejects(() => reg.execute({ command: "x", description: "t" }, exec), /no sandbox backend/);

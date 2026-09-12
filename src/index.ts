@@ -1,12 +1,11 @@
 // dsh-bash-terminal - one shell tool, three Windows terminals.
 //
 // Registers a model-facing shell tool. The terminal backend (powershell /
-// gitbash / msys2 / wsl) is chosen by the USER in the Web UI settings (default
+// gitbash / wsl) is chosen by the USER in the Web UI settings (default
 // terminal); the model cannot pick it — the tool always obeys the user's
 // choice:
 //   - powershell: pwsh -NoLogo -NoProfile -NonInteractive -Command <cmd>
 //   - gitbash:    Git for Windows bash -lc <cmd>  (POSIX; /d/... paths)
-//   - msys2:      C:\msys64 msys2.exe -c <cmd>    (POSIX; full GCC/mingw64 toolchain)
 //   - wsl:        wsl [-d <distro>] -e bash -lc <cmd>  (Linux; /mnt/d/... paths)
 //
 // The tool spawns through the shared ctx.subprocess seam (process-tree
@@ -28,6 +27,7 @@ import {
   clampTimeout,
   deadline,
   parseExitStatus,
+  settingsNamespace,
   timeoutOf,
   sandboxDenialMarker,
   validateEscalationArgs,
@@ -45,7 +45,6 @@ import type {
   ShellId,
   ToolRunContext
 } from "./dsh-types.js";
-import { createTerminalRegistry, terminalTool } from "./terminal.js";
 
 /** Stable Cordis plugin name. */
 export const name = "bash-terminal";
@@ -53,7 +52,7 @@ export const name = "bash-terminal";
 export const inject = ["tools", "systemPrompt", "shellEnv", "subprocess", "settings", "sandbox", "sandboxPolicy"];
 
 /** The terminal backends this tool exposes, in catalog order. */
-export const SHELLS = ["powershell", "gitbash", "msys2", "wsl"] as const;
+export const SHELLS = ["powershell", "gitbash", "wsl"] as const;
 /** The backend used when the caller does not name one. */
 export const DEFAULT_SHELL: ShellId = "powershell";
 /** Settings namespace backing the user-chosen default terminal. */
@@ -86,7 +85,6 @@ export interface ConfigValues {
   maxTimeoutMs: number;
   pwshPath: string;
   gitBashPath: string;
-  msys2Path: string;
   wslPath: string;
 }
 
@@ -97,7 +95,6 @@ export const Config = z.object({
   maxTimeoutMs: z.number().default(MAX_TIMEOUT_MS),
   pwshPath: z.string().default(""),
   gitBashPath: z.string().default(""),
-  msys2Path: z.string().default(""),
   wslPath: z.string().default("")
 });
 
@@ -156,33 +153,6 @@ export function candidateGitBashPaths(env: NodeJS.ProcessEnv = process.env): str
   return candidates;
 }
 
-/**
- * MSYS2 locations: C:\\msys64 by default (msys2.exe -> bash.exe, or usr\\bin\\bash.exe),
- * then PATH bash.exe entries. MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash,
- * so it cannot run under the DSH Windows ACL restricted-token sandbox.
- */
-export function candidateMsys2Paths(env: NodeJS.ProcessEnv = process.env): string[] {
-  const programFiles = env.ProgramFiles ?? "C:\\Program Files";
-  const candidates = [
-    "C:\\msys64\\msys2.exe",
-    "C:\\msys64\\usr\\bin\\bash.exe",
-    "C:\\msys64\\bin\\bash.exe"
-  ];
-  // Also check 32-bit variant
-  const programFilesX86 = env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)";
-  if (programFilesX86 !== programFiles) {
-    candidates.push("C:\\msys64\\msys2.exe"); // same path regardless of arch
-  }
-  for (const entry of (env.PATH ?? "").split(";")) {
-    const trimmed = entry.trim().replace(/^"|"$/g, "");
-    if (trimmed.length === 0) continue;
-    if (trimmed.toLowerCase().includes("msys64") || trimmed.toLowerCase().includes("mingw64")) {
-      candidates.push(join(trimmed, "bash.exe"));
-    }
-  }
-  return candidates;
-}
-
 export function defaultWslPath(env: NodeJS.ProcessEnv = process.env): string {
   const systemRoot = env.SystemRoot ?? "C:\\Windows";
   return join(systemRoot, "System32", "wsl.exe");
@@ -191,7 +161,7 @@ export function defaultWslPath(env: NodeJS.ProcessEnv = process.env): string {
 /** Executable paths, possibly undefined when a backend is not installed. */
 export type { ResolvedPaths };
 
-type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "msys2Path" | "wslPath">>;
+type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "wslPath">>;
 
 export function resolveAllPaths(config: PathConfig = {}, env: NodeJS.ProcessEnv = process.env): ResolvedPaths {
   const pwsh = config.pwshPath && config.pwshPath.trim().length > 0
@@ -200,13 +170,10 @@ export function resolveAllPaths(config: PathConfig = {}, env: NodeJS.ProcessEnv 
   const gitbash = config.gitBashPath && config.gitBashPath.trim().length > 0
     ? config.gitBashPath
     : resolveFromCandidates(candidateGitBashPaths(env));
-  const msys2 = config.msys2Path && config.msys2Path.trim().length > 0
-    ? config.msys2Path
-    : resolveFromCandidates(candidateMsys2Paths(env));
   const wsl = config.wslPath && config.wslPath.trim().length > 0
     ? config.wslPath
     : defaultWslPath(env);
-  return { pwsh, gitbash, msys2, wsl };
+  return { pwsh, gitbash, wsl };
 }
 
 // ---- argv / env construction ------------------------------------------------
@@ -222,8 +189,6 @@ export function buildArgv(
       return [paths.pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command];
     case "gitbash":
       return [paths.gitbash, "-lc", command];
-    case "msys2":
-      return [paths.msys2, "-c", command];
     case "wsl": {
       const distroArg = distro !== undefined && distro.trim().length > 0 ? ["-d", distro.trim()] : [];
       return [paths.wsl, ...distroArg, "-e", "bash", "-lc", command];
@@ -480,29 +445,18 @@ function renderProcessRead(read: ProcessRead): string {
 
 // ---- tool description / validation --------------------------------------------
 
-/** Model-facing lead sentence for each backend. The user's default terminal is
- * stated up front so the model never has to guess which syntax applies. */
-export const SHELL_DESCRIPTIONS: Record<ShellId, string> = {
-  powershell: "Execute a PowerShell command (pwsh -NoLogo -NoProfile -NonInteractive -Command <command>) and return its stdout/stderr. PowerShell syntax; native Windows paths (C:\\...); environment variables via $env:NAME.",
-  gitbash: "Execute a bash command (Git for Windows bash -lc <command>) and return its stdout/stderr. POSIX syntax; paths like /d/WorkSpace; PATH includes /usr/bin and /mingw64/bin so git, npm, ssh etc. work; environment variables via $NAME.",
-  msys2: "Execute a bash command (C:\\msys64\\msys2.exe -c <command>) and return its stdout/stderr. POSIX syntax; paths like /c/...; PATH includes /usr/bin and /mingw64/bin so git, npm, gcc, make etc. work; environment variables via $NAME. MSYS2 provides a full GCC/mingw64 toolchain.",
-  wsl: "Execute a Linux bash command (wsl [-d <distro>] -e bash -lc <command>) and return its stdout/stderr. Linux syntax; Windows files under /mnt/d/...; environment variables via $NAME."
-};
-
 /**
- * Render the model-facing tool description for one backend. The backend is
- * whatever the user chose in Settings -> General -> Default terminal; the
- * description names it explicitly so the model writes the right syntax.
- * @param backgroundEnabled - advertise `run_in_background` controls.
- * @param shell - active backend; unknown values fall back to the default.
+ * Render the model-facing tool description. This 0.1.x baseline advertises the
+ * static multi-backend description; the model is told never to guess or
+ * override the user's configured terminal.
  */
-export function toolDescription(backgroundEnabled: boolean, shell: string = DEFAULT_SHELL): string {
-  const active: ShellId = (SHELLS as readonly string[]).includes(shell) ? (shell as ShellId) : DEFAULT_SHELL;
-  const lead = SHELL_DESCRIPTIONS[active];
+function toolDescription(backgroundEnabled: boolean): string {
   const base = [
-    `The user's chosen default terminal (Settings -> General -> Default terminal) is ${active}; commands run there.`,
-    lead,
-    "Each call spawns a fresh shell: no state (cwd, variables, aliases) persists between calls - pass workdir instead of using cd. Non-zero exits are reported as [exit code: N] markers; investigate failures before moving on. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Commands run under the DSH sandbox: confined modes (read-only / workspace-write) are enforced through ctx.sandbox and deny fail-closed for PowerShell; danger-full-access, Git Bash, MSYS2, and WSL run unconfined."
+    "Execute a command in a Windows terminal. The terminal backend (powershell / gitbash / wsl) is chosen by the user in the Web UI settings (default terminal) — never guess or override it; use whatever the user configured. Prefer this tool over pwsh for terminal commands. Backends:",
+    "- powershell: runs pwsh -NoLogo -NoProfile -NonInteractive -Command <command>. PowerShell syntax; native Windows paths (C:\\...); environment variables via $env:NAME.",
+    "- gitbash: runs Git for Windows' bash -lc <command>. POSIX syntax; paths like /d/WorkSpace; PATH includes /usr/bin and /mingw64/bin so git, npm, ssh etc. work; environment variables via $NAME.",
+    "- wsl: runs inside the default WSL Linux distribution via wsl -e bash -lc <command>; pass distro (e.g. Ubuntu) to pick another. Linux syntax; Windows files under /mnt/d/...; environment variables via $NAME.",
+    "Each call spawns a fresh shell: no state (cwd, variables, aliases) persists between calls - pass workdir instead of using cd. Non-zero exits are reported as [exit code: N] markers; investigate failures before moving on. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Commands run outside the DSH sandbox with the same privileges as the dsh process itself."
   ].join(" ");
   if (!backgroundEnabled) return base;
   return base + " Set run_in_background: true for long-running commands: the call returns a job id immediately; read its output with job_output and stop it with job_kill. No timeout applies to background runs.";
@@ -536,15 +490,12 @@ export function validateArgs(args: Record<string, unknown>): ValidatedShellArgs 
 }
 
 /**
- * Official sandbox seam (mirrors dsh-tool-bash / dsh-pwsh-sandbox): resolve the
- * per-call policy from ctx.sandboxPolicy, and — unless the call runs
- * danger-full-access — confine the spawn argv through ctx.sandbox. WSL is a
- * self-contained Linux VM and is not confined (its isolation IS the sandbox).
- * Git Bash and MSYS2 are also not confined: DSH's Windows ACL restricted-token
- * runner cannot start Cygwin/MSYS2 (CreateFileMapping Win32 error 5), so
- * attempting to wrap them would abort every Git Bash / MSYS2 command. A
- * requested confined mode with no usable backend throws the fail-closed
- * SandboxUnavailableError, exactly like the shipped executors.
+ * Official sandbox seam: resolve the per-call policy from ctx.sandboxPolicy,
+ * and — unless the call runs danger-full-access — confine the spawn argv
+ * through ctx.sandbox. WSL is a self-contained Linux VM and is not confined
+ * (its isolation IS the sandbox). A requested confined mode with no usable
+ * backend throws the fail-closed SandboxUnavailableError, exactly like the
+ * shipped executors.
  */
 function confineSpawn(
   ctx: BashTerminalContext,
@@ -552,15 +503,8 @@ function confineSpawn(
   policy: SandboxPolicy,
   shell: string
 ): { argv: string[]; sandbox?: SandboxFacts } {
-  if (policy.mode === "danger-full-access" || shell === "wsl" || shell === "gitbash" || shell === "msys2") {
-    const sandbox = shell === "wsl"
-      ? { mode: policy.mode, enforcement: "wsl-isolation" }
-      : shell === "gitbash"
-        ? { mode: policy.mode, enforcement: "gitbash-unconfined" }
-        : shell === "msys2"
-          ? { mode: policy.mode, enforcement: "msys2-unconfined" }
-          : undefined;
-    return { argv, sandbox };
+  if (policy.mode === "danger-full-access" || shell === "wsl") {
+    return { argv, sandbox: shell === "wsl" ? { mode: policy.mode, enforcement: "wsl-isolation" } : undefined };
   }
   const confined = ctx.sandbox.confine(argv, policy);
   return {
@@ -633,7 +577,7 @@ export function apply(ctx: BashTerminalContext, config: Partial<ConfigValues> = 
     throw new Error(`dsh-bash-terminal: invalid defaultShell ${JSON.stringify(defaultShell)}`);
   }
   const settingsScope = ctx.settings.register(
-    SETTINGS_NAMESPACE,
+    settingsNamespace(SETTINGS_NAMESPACE),
     z.object({ defaultShell: z.union(SHELLS.map((s) => z.const(s))).default(defaultShell) }),
     { base: { defaultShell } }
   );
@@ -667,26 +611,10 @@ export function apply(ctx: BashTerminalContext, config: Partial<ConfigValues> = 
   });
 
   const toolName = "shell";
-  const terminalRegistry = createTerminalRegistry(ctx);
-  ctx.tools.register(terminalTool(ctx, terminalRegistry, paths, () => settingsScope.get().defaultShell));
-
-  // The model-facing description must track the user's chosen default
-  // terminal: a static description listing every backend leaves the model
-  // guessing which syntax applies. Re-render it on every prompt assembly —
-  // settings are hot-reloaded, so a change shows up on the next request
-  // without a restart.
-  ctx.on("system-prompt/assemble", async (_assembly, _context, next) => {
-    const assembled = await next();
-    const description = toolDescription(backgroundEnabled, settingsScope.get().defaultShell);
-    const tools = Array.isArray(assembled.tools)
-      ? assembled.tools.map((tool) => (tool.name === toolName ? { ...tool, description } : tool))
-      : assembled.tools;
-    return { ...assembled, tools };
-  });
 
   ctx.tools.register(defineTool<ShellToolResult>({
     name: toolName,
-    description: toolDescription(backgroundEnabled, settingsScope.get().defaultShell),
+    description: toolDescription(backgroundEnabled),
     parameters: {
       command: {
         type: "string",
@@ -889,8 +817,6 @@ export const internals = {
   buildEnv,
   buildArgv,
   validateArgs,
-  toolDescription,
-  SHELL_DESCRIPTIONS,
   DEFAULT_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
   DEFAULT_MAX_OUTPUT_BYTES

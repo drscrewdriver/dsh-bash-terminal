@@ -10,7 +10,7 @@
 // ---- shared ------------------------------------------------------------------
 
 /** The terminal backends this plugin exposes. */
-export type ShellId = "powershell" | "gitbash" | "msys2" | "wsl";
+export type ShellId = "powershell" | "gitbash" | "wsl";
 
 /** Permissive node of the DSH JSON-schema dialect used in tool output declarations. */
 export interface JsonSchemaNode {
@@ -295,19 +295,17 @@ export interface ApprovalSeam {
 
 /**
  * The structural context face dsh-bash-terminal programs against: the union
- * of every `ctx.*` member touched by src/index.ts and src/terminal.ts.
+ * of every `ctx.*` member touched by src/index.ts.
  */
 export interface BashTerminalContext {
   logger?: LoggerSeam;
   systemPrompt: SystemPromptSeam;
   tools: ToolsSeam;
-  on(event: "system-prompt/assemble", handler: AssembleHandler): void;
   shellEnv: ShellEnvSeam;
   settings: SettingsSeam;
   sandboxPolicy: SandboxPolicySeam;
   sandbox: SandboxSeam;
   get(key: string): unknown;
-  effect(fn: () => void | (() => void), name?: string): unknown;
   /** Injected via `inject: ["subprocess"]`; tests may defer assignment. */
   subprocess: SubprocessSeam | null;
 }

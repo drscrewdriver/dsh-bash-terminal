@@ -10,6 +10,7 @@ import * as toolsNs from "@deepseek-ai/dsh-tools";
 import * as sandboxNs from "@deepseek-ai/dsh-sandbox";
 import { HarnessError } from "@deepseek-ai/dsh-llm";
 import { parseExitStatus } from "@deepseek-ai/dsh-shell";
+import { settingsNamespace } from "@deepseek-ai/dsh-settings";
 import { clampTimeout, deadline, timeoutOf } from "@deepseek-ai/dsh-timeout";
 import zDefault from "@deepseek-ai/schemastery";
 import type {
@@ -21,6 +22,9 @@ import type {
 } from "./dsh-types.js";
 
 export { HarnessError, parseExitStatus, clampTimeout, deadline, timeoutOf };
+
+/** 0.1.x settings seam: register() takes a namespaced key built by this helper. */
+export { settingsNamespace };
 
 /** Wrap a fully specified tool spec into a registrable tool definition. */
 export const defineTool = toolsNs.defineTool as unknown as <TValue>(spec: ToolSpec<TValue>) => ToolDefinition;

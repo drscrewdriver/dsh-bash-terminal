@@ -1,8 +1,11 @@
 // dsh-bash-terminal client plugin: a "Default terminal" preference row in the
 // Web UI General settings. The user picks powershell / gitbash / wsl; the host
 // shell tool obeys that choice (the model cannot change it).
+//
+// DSH 0.1.x serves the browser store from @deepseek-ai/dsh-client-runtime/client;
+// the module arrives through the DSH web module table at load time.
 
-import { defineStore } from "@deepseek-ai/dsh-client-store";
+import { defineStore } from "@deepseek-ai/dsh-client-runtime/client";
 
 const SETTINGS_NS = "settings.bash-terminal";
 const SETTINGS_NAMESPACE = "bash-terminal";
@@ -111,7 +114,7 @@ interface RowStoreActions {
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(SETTINGS_NS, { zh, en }), "bash-terminal: settings dictionaries");
   const scope = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE });
-  const store = defineStore<RowState, { sync: (draft: RowState, shell?: string, revision?: number, writable?: boolean) => void }>({
+  const store = defineStore<RowState>({
     init: (): RowState => ({ shell: "powershell", revision: -1, writable: false }),
     actions: {
       sync: (d, shell, revision, writable) => {
