@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
+import { SHELLS as HOST_SHELLS, internals } from "../lib/index.js";
+const { SHELL_DESCRIPTIONS } = internals;
 const profileRequire = createRequire(join(os.homedir(), ".dsh", "profiles", "web", "package.json"));
 function loadShared(name) {
   // CI: react is installed into the project node_modules (npm install react --no-save);
@@ -97,6 +99,23 @@ assert.strictEqual(localeRegisters.length, 1);
 assert.strictEqual(localeRegisters[0].ns, "settings.bash-terminal");
 assert.ok(localeRegisters[0].dicts.zh["shell.title"]);
 assert.ok(localeRegisters[0].dicts.en["shell.title"]);
+
+// --- host <-> client drift guard ---------------------------------------------
+// The settings row must offer exactly the backends the host supports, in the
+// host catalog order, with a label in both dictionaries. A host backend added
+// without its client entry (the msys2 bug) fails here.
+assert.deepStrictEqual(HOST_SHELLS, ["powershell", "gitbash", "msys2", "wsl"], "host catalog order");
+const bundleShells = /var SHELLS = (\[[^\]]*\]);/.exec(bundle);
+assert.ok(bundleShells, "client bundle declares its shell list");
+assert.deepStrictEqual(JSON.parse(bundleShells[1].replace(/'/g, '"')), HOST_SHELLS, "client shell list matches the host catalog order");
+const dicts = localeRegisters[0].dicts;
+for (const id of HOST_SHELLS) {
+  assert.ok(bundle.includes(`"${id}"`), `bundle offers the host backend ${id}`);
+  assert.ok(dicts.zh["shell." + id], `zh dictionary labels ${id}`);
+  assert.ok(dicts.en["shell." + id], `en dictionary labels ${id}`);
+  assert.ok(SHELL_DESCRIPTIONS[id], `host describes ${id}`);
+}
+assert.ok(bundle.includes("shell.msys2"), "bundle carries the shell.msys2 key");
 
 // settings row registered into the General item slot
 assert.strictEqual(slotRegistrations.length, 1);
