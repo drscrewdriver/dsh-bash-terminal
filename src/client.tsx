@@ -2,6 +2,9 @@
 // Web UI General settings, mirroring the shipped EnterBehaviorRow grammar
 // (row layout, capsule selector with chevron, --dsw-* tokens).
 //
+// The row offers one entry per host shell id — powershell / gitbash / msys2 /
+// wsl — in the same order as SHELLS in ./index.ts.
+//
 // DSH >= 0.1.5: the browser module table (PLATFORM_MODULES) seeds react,
 // @deepseek-ai/cordis, @deepseek-ai/dsh-client-store, @deepseek-ai/dsh-client-ui-slots,
 // @deepseek-ai/dsh-client-ui-primitives and @deepseek-ai/dsh-client-ui-dockkit by
@@ -14,7 +17,7 @@ import { IconChevronDownOutline14, Menu } from "@deepseek-ai/dsh-client-ui-primi
 
 const SETTINGS_NS = "settings.bash-terminal";
 const SETTINGS_NAMESPACE = "bash-terminal";
-const SHELLS = ["powershell", "gitbash", "wsl"] as const;
+const SHELLS = ["powershell", "gitbash", "msys2", "wsl"] as const;
 
 type ShellOption = (typeof SHELLS)[number];
 
@@ -40,6 +43,7 @@ const zh: Record<string, string> = {
   "shell.description": "shell 工具执行命令时使用的终端",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 const en: Record<string, string> = {
@@ -47,6 +51,7 @@ const en: Record<string, string> = {
   "shell.description": "Terminal used by the shell tool",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 

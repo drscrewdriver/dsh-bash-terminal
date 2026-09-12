@@ -21,6 +21,13 @@ await build({
   outfile: join(root, "dist", "client.core.js"),
   external: ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/*"],
   jsx: "automatic",
+  // Pin the TS options instead of letting esbuild discover a tsconfig by walking
+  // up from the entry point: an in-repo build found the repo-root tsconfig.json
+  // (emitting a leading "use strict";) while the same source built from an
+  // out-of-repo worktree did not — two different committed artifacts for one
+  // source. These are the values that tsconfig actually supplied, so behavior is
+  // unchanged; only the stray line disappears.
+  tsconfigRaw: { compilerOptions: { target: "ES2022", useDefineForClassFields: true } },
   logLevel: "warning"
 });
 

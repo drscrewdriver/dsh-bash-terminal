@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.17 (2026-09-13)
+
+- **MSYS2 成为第 4 个终端后端**（`SHELLS` 顺序 powershell / gitbash / msys2 / wsl）。`Config` 新增 `msys2Path`，经 `resolveAllPaths` 接线；`SHELL_DESCRIPTIONS.msys2` 与 `toolDescription` 同步补上后端说明。
+- **MSYS2 设置项补齐（客户端）**: Web UI「默认终端」行此前只有 powershell / gitbash / wsl —— 后端有 MSYS2 而前端选不了。`src/client.tsx` 补上 `msys2` 选项与 `shell.msys2` 双语文案（MSYS2 为专有名词，中英文一致）。
+- **MSYS2 管道 stdio 修复**: `C:\msys64\msys2.exe` 是分配控制台的 Cygwin 启动器，在管道 stdio 下以 exit 0 返回零字节（stdout/stderr 均为 0 字节，实测 MSYS2 bash 5.3.15），任何 MSYS2 命令都会静默无输出。候选顺序改为优先 `C:\msys64\usr\bin\bash.exe` → `bin\bash.exe` → PATH 中的 mingw64/msys64 条目，`msys2.exe` 降级为候选列表末尾的兜底项。
+- **MSYS2 登录 shell**: `buildArgv` 用 `-lc` 而非 `-c`；只有登录 shell 会 source `/etc/profile`，把 `/usr/bin` 与 `/mingw64/bin` 加进 PATH（裸 `-c` 下 `bash` 会解析到 `C:\Windows\System32\bash.exe`，`gcc`/`make` 全部 command not found）。
+- **MSYS2 环境**: `buildEnv` 注入 `MSYSTEM=MINGW64`（用户显式传入的值优先），让 `/mingw64/bin` 的 gcc、make 进入 PATH；`terminal` 工具的交互式会话 env 与之一致。
+- **MSYS2 沙箱**: 与 Git Bash 同理不包装（Windows ACL 受限令牌 runner 与 Cygwin/MSYS2 不兼容），结果报告 `enforcement: msys2-unconfined`。
+- **交互式终端 env 走 `buildEnv`**: `src/terminal.ts` 原先自己拼一份 env，绕过了 `buildEnv` 里的 MSYSTEM 注入 —— 结果 `shell` 工具正常、msys2 **交互式终端**却拿不到 `/mingw64/bin`（`/etc/profile` 按默认 MSYS 环境配置 PATH）。现改为 `buildEnv(shell, ctx.shellEnv.collect(exec), process.env.WSLENV)`：既拿到 MSYSTEM 注入，也不再重复维护 WSLENV 逻辑。第三个参数必须显式传：`spawnTerminal` 用 `childEnv(spec.env)` 整体替换子进程环境，环境里的 WSLENV 否则不可见。
+- **WSL `WSLENV` 改为叠加而非重建**: WSLENV 是 WSL 的跨界白名单，旧代码只用 `dshEnv` 重建它，会丢掉环境里已有的条目（本机 `WSLENV=WT_SESSION:WT_PROFILE_ID:`，Windows Terminal 导出），这些变量将不再进入 WSL。现改为在继承值上叠加：按 `:` 切分后过滤空项（继承值以 `:` 结尾，字符串拼接会产出空条目）、排除 `WSLENV` 键自身（它也是 `dshEnv` 的键，追加会得到 `...:WSLENV`）；调用方显式提供的 WSLENV 优先于继承值。
+- **交互式终端**: `terminalArgv("msys2")` 用 `-l`。不能沿用 `-lc`：该 argv 不带命令（PTY 本身即会话），`bash -lc` 无操作数会立即以 `-c: option requires an argument`（exit 2）退出。
+- **客户端 bundle 可复现**: `scripts/build-client.mjs` 原先让 esbuild 从 `src/client.tsx` 向上搜索 tsconfig，仓库内构建会命中根 `tsconfig.json` 并多输出一行 `"use strict";`，而仓库外 worktree 构建不会 —— 同一份源码产出两个不同的提交产物。现显式固定 `tsconfigRaw: { compilerOptions: { target: "ES2022", useDefineForClassFields: true } }`（即根 tsconfig 实际生效的值），唯一可观察差异是那行 `"use strict";` 消失。
+- **回归防护**: `test/unit.ts` 断言 msys2 的 `-lc` argv、`MSYSTEM` 注入与用户值优先、`bash.exe` 必须排在 `msys2.exe` 之前、`WSLENV` 叠加语义（继承条目保留 / 无空条目 / 不追加 `WSLENV` 自身 / 显式值优先），并加了一条真实 spawn 冒烟断言（stdout 非空且含 `/mingw64/bin/gcc`；0 字节即失败）；`test/apply.ts` 断言 msys2 的 argv/env、`msys2-unconfined` 与 WSLENV 结构；`test/terminal.ts` 断言交互式 argv、PTY env 走 `buildEnv` 的接线，并跑一条**真实 node-pty 的 msys2 会话**（断言 `MSYSTEM=MINGW64`、`/mingw64/bin/gcc`、`BASH=/usr/bin/bash`）；`test/client.ts` 新增漂移守卫——按宿主 `SHELLS` 逐项断言客户端 bundle 的列表与渲染出的菜单项一致（含顺序）且中英文字典都有 `shell.<id>`。上述每条守卫都做过反向对照（改坏构建产物 → 断言失败 → 还原后通过）。
+
 ## 0.3.16 (2026-09-12)
 
 - **全量 TypeScript 重写**. 服务端 `lib/index.js` / `lib/terminal.js` → `src/index.ts` / `src/terminal.ts`；客户端 `src/client.jsx` → `src/client.tsx`；测试 `test/*.mjs` → `test/*.ts`（编译到 `test-dist/` 运行）。`tsc --strict` + `noUncheckedIndexedAccess` 全绿。

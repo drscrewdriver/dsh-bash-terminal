@@ -101,6 +101,9 @@ assert.ok(bundle.includes("window.__ModuleLoader__.load"), "bundle wrapped");
 // package @deepseek-ai/dsh-client-store; the retired runtime name would miss it.
 assert.ok(bundle.includes("@deepseek-ai/dsh-client-store"), "requests the seeded client store");
 assert.ok(!bundle.includes("dsh-client-runtime"), "does not request the retired client runtime");
+// Menu props are captured so the rendered option list can be inspected: this
+// branch renders a Menu of items, not a <select> of <option>.
+const menuProps: { items?: { id: string; label: string }[] }[] = [];
 let exported: ExportedClient | undefined;
 const globalWithWindow = globalThis as typeof globalThis & { window?: unknown };
 globalWithWindow.window = {
@@ -113,7 +116,15 @@ globalWithWindow.window = {
         if (name === "@deepseek-ai/dsh-client-ui-primitives") {
           const React = loadShared("react") as ReactLike;
           return {
-            Menu: (props: { anchor: unknown }) => React.createElement("div", null, props.anchor),
+            Menu: (props: { anchor: unknown; items?: { id: string; label: string }[] }) => {
+              menuProps.push(props);
+              return React.createElement(
+                "div",
+                null,
+                props.anchor,
+                ...(props.items ?? []).map((item) => React.createElement("span", { key: item.id }, item.label))
+              );
+            },
             IconChevronDownOutline14: () => null
           };
         }
@@ -135,6 +146,30 @@ assert.strictEqual(localeRegisters.length, 1);
 assert.strictEqual(localeRegisters[0].ns, "settings.bash-terminal");
 assert.ok(localeRegisters[0].dicts.zh["shell.title"]);
 assert.ok(localeRegisters[0].dicts.en["shell.title"]);
+
+// Drift guard: the Web UI must offer exactly the backends the host supports, in
+// the host's order. src/client.tsx cannot import the host module (it pulls
+// node: builtins), so the contract is asserted against the shipped bundle and
+// the rendered menu instead. The host list is spelled out here on purpose: if a
+// backend is added to src/index.ts SHELLS without the client half, this fails.
+const hostShells = ["powershell", "gitbash", "msys2", "wsl"];
+const bundleShells = /var SHELLS = \[([^\]]*)\]/.exec(bundle);
+assert.ok(bundleShells, "client bundle declares its shell list");
+const parsedShells = bundleShells[1].split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+assert.deepStrictEqual(parsedShells, hostShells, "client shell list matches the host list, in host order");
+const zhDict = localeRegisters[0].dicts.zh;
+const enDict = localeRegisters[0].dicts.en;
+for (const id of hostShells) {
+  assert.strictEqual(typeof zhDict["shell." + id], "string", "zh dictionary missing shell." + id);
+  assert.strictEqual(typeof enDict["shell." + id], "string", "en dictionary missing shell." + id);
+  assert.strictEqual(zhDict["shell." + id], enDict["shell." + id], "shell." + id + " is a proper noun and must not be translated");
+}
+assert.strictEqual(zhDict["shell.msys2"], "MSYS2", "MSYS2 label");
+assert.strictEqual(
+  Object.keys(enDict).filter((k) => k.startsWith("shell.")).length,
+  hostShells.length + 2,
+  "en dictionary has an unexpected number of shell.* keys"
+);
 
 // settings row registered into the General item slot
 assert.strictEqual(slotRegistrations.length, 1);
@@ -165,7 +200,7 @@ const { renderToString } = loadShared("react-dom/server") as ReactDomServerLike;
 const renderState = { shell: "wsl", revision: 3, writable: true };
 const selectors: unknown[] = [];
 const fakeUseStore = (sel: (s: typeof renderState) => unknown) => { selectors.push(sel(renderState)); return selectors[selectors.length - 1]; };
-const t = (k: string) => ({ "shell.title": "默认终端", "shell.powershell": "PowerShell", "shell.gitbash": "Git Bash", "shell.wsl": "WSL" }[k] ?? k);
+const t = (k: string) => ({ "shell.title": "默认终端", "shell.powershell": "PowerShell", "shell.gitbash": "Git Bash", "shell.msys2": "MSYS2", "shell.wsl": "WSL" }[k] ?? k);
 const React = loadShared("react") as ReactLike;
 const html = renderToString(React.createElement(Component, { t, useStore: fakeUseStore, setShell: injected.setShell }));
 assert.ok(html.includes("默认终端"), "row renders the title");
@@ -173,6 +208,18 @@ assert.ok(!html.includes("AI 无法更改"), "removed the 'AI cannot change' phr
 assert.ok(html.includes("WSL"), "selector shows the current shell label");
 assert.ok(html.includes("btSelector"), "selector uses the official capsule class");
 assert.deepStrictEqual(selectors, ["wsl", true], "component reads shell + writable from store");
+
+// The rendered option list covers every host shell id, in the host's order, and
+// each entry is labelled through the locale dictionary.
+assert.strictEqual(menuProps.length, 1, "menu rendered exactly once");
+const menuItems = menuProps[0].items ?? [];
+assert.deepStrictEqual(menuItems.map((item) => item.id), hostShells, "menu offers every host shell id in host order");
+assert.deepStrictEqual(
+  menuItems.map((item) => item.label),
+  ["PowerShell", "Git Bash", "MSYS2", "WSL"],
+  "menu labels come from the dictionaries"
+);
+assert.ok(html.includes("MSYS2"), "rendered row includes the MSYS2 entry");
 
 // settings change -> bound actions sync again (subscribe callback fires push)
 scopeState = { status: "ready", value: { defaultShell: "powershell" }, revision: 4, writable: true };
