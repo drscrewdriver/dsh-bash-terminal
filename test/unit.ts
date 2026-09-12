@@ -20,10 +20,27 @@ assert.strictEqual(env.NO_COLOR, "1");
 assert.strictEqual(buildEnv("msys2", undefined).MSYSTEM, "MINGW64");
 assert.strictEqual(buildEnv("msys2", { MSYSTEM: "CLANG64" }).MSYSTEM, "CLANG64", "explicit MSYSTEM wins");
 assert.strictEqual(buildEnv("gitbash", undefined).MSYSTEM, undefined, "MSYSTEM only set for msys2");
-const wslEnv = buildEnv("wsl", { DSH_WEB_URL: "http://x", DSH_TEST: "1" });
+// The inherited WSLENV is passed explicitly so these assertions do not depend on
+// the ambient environment (this host really does export one).
+const wslEnv = buildEnv("wsl", { DSH_WEB_URL: "http://x", DSH_TEST: "1" }, undefined);
 assert.ok(wslEnv.WSLENV!.includes("DSH_WEB_URL"));
 assert.ok(wslEnv.WSLENV!.includes("DSH_TEST"));
-assert.strictEqual(buildEnv("wsl", undefined).WSLENV, undefined);
+assert.strictEqual(buildEnv("wsl", undefined, undefined).WSLENV, undefined);
+// A pre-existing WSLENV (Windows Terminal exports WT_SESSION/WT_PROFILE_ID) must
+// survive: WSLENV is an allow-list, so rebuilding it would silently stop those
+// variables crossing into WSL.
+const inherited = buildEnv("wsl", { DSH_WEB_URL: "http://x" }, "WT_SESSION:WT_PROFILE_ID:");
+assert.ok(inherited.WSLENV!.includes("WT_SESSION"), "inherited WSLENV entries preserved");
+assert.ok(inherited.WSLENV!.includes("WT_PROFILE_ID"), "inherited WSLENV entries preserved");
+assert.ok(inherited.WSLENV!.includes("DSH_WEB_URL"), "DSH keys still appended");
+assert.strictEqual(inherited.WSLENV, "WT_SESSION:WT_PROFILE_ID:DSH_WEB_URL");
+// An explicit WSLENV from the caller wins over the inherited value.
+assert.strictEqual(
+  buildEnv("wsl", { DSH_WEB_URL: "http://x", WSLENV: "MY_VAR" }, "WT_SESSION:").WSLENV,
+  "MY_VAR:DSH_WEB_URL",
+  "explicit WSLENV wins over inherited"
+);
+assert.strictEqual(buildEnv("gitbash", { DSH_WEB_URL: "http://x" }, "WT_SESSION:").WSLENV, undefined, "WSLENV is wsl-only");
 
 assert.strictEqual(renderResult({ stdout: { text: "hello", truncated: false }, stderr: { text: "", truncated: false }, exitCode: 0, signal: null, timedOut: false, timeoutMs: 1000 }), "hello");
 assert.ok(renderResult({ stdout: { text: "out", truncated: false }, stderr: { text: "err", truncated: false }, exitCode: 3, signal: null, timedOut: false, timeoutMs: 1000 }).includes("[stderr]"));

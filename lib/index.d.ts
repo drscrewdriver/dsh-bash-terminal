@@ -52,10 +52,18 @@ export declare function resolveAllPaths(config?: PathConfig, env?: NodeJS.Proces
 export declare function buildArgv(shell: string, command: string, paths: ResolvedPaths, distro?: string): Array<string | undefined>;
 /**
  * Merge the DSH_* environment over the process environment. For WSL, only
- * variables explicitly listed in WSLENV cross the boundary, so every DSH_*
- * key is appended there (WSLENV is a : separated VAR[/flag] list).
+ * variables explicitly listed in WSLENV cross the boundary, so every DSH_* key is
+ * appended to it (WSLENV is a `:` separated VAR[/flag] list).
+ *
+ * WSLENV usually already exists for reasons unrelated to us -- Windows Terminal
+ * exports e.g. `WT_SESSION:WT_PROFILE_ID:` -- so the list is layered rather than
+ * rebuilt, or those entries would be silently dropped from every WSL call.
+ * Callers that spawn through a seam which replaces the parent environment
+ * wholesale (the PTY path) must pass the inherited value explicitly.
+ *
+ * @param inheritedWslenv - the WSLENV the child would otherwise inherit.
  */
-export declare function buildEnv(shell: string, dshEnv?: Record<string, string>): Record<string, string | undefined>;
+export declare function buildEnv(shell: string, dshEnv?: Record<string, string>, inheritedWslenv?: string | undefined): Record<string, string | undefined>;
 export interface SpawnResolution {
     command: string;
     workdir: string;

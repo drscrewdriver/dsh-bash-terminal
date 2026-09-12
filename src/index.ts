@@ -246,10 +246,22 @@ export function buildArgv(
 
 /**
  * Merge the DSH_* environment over the process environment. For WSL, only
- * variables explicitly listed in WSLENV cross the boundary, so every DSH_*
- * key is appended there (WSLENV is a : separated VAR[/flag] list).
+ * variables explicitly listed in WSLENV cross the boundary, so every DSH_* key is
+ * appended to it (WSLENV is a `:` separated VAR[/flag] list).
+ *
+ * WSLENV usually already exists for reasons unrelated to us -- Windows Terminal
+ * exports e.g. `WT_SESSION:WT_PROFILE_ID:` -- so the list is layered rather than
+ * rebuilt, or those entries would be silently dropped from every WSL call.
+ * Callers that spawn through a seam which replaces the parent environment
+ * wholesale (the PTY path) must pass the inherited value explicitly.
+ *
+ * @param inheritedWslenv - the WSLENV the child would otherwise inherit.
  */
-export function buildEnv(shell: string, dshEnv?: Record<string, string>): Record<string, string | undefined> {
+export function buildEnv(
+  shell: string,
+  dshEnv?: Record<string, string>,
+  inheritedWslenv: string | undefined = process.env.WSLENV
+): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...ENV_OVERRIDES, ...dshEnv };
   if (shell === "msys2") {
     // Picks the MINGW64 environment, so /mingw64/bin (gcc, make, ...) joins PATH
@@ -259,8 +271,19 @@ export function buildEnv(shell: string, dshEnv?: Record<string, string>): Record
   if (shell === "wsl") {
     const keys = Object.keys(dshEnv ?? {});
     if (keys.length > 0) {
-      const existing = typeof env.WSLENV === "string" && env.WSLENV.length > 0 ? env.WSLENV : undefined;
-      env.WSLENV = [existing, keys.join(":")].filter(Boolean).join(":");
+      // An explicit WSLENV from the caller wins over what we would inherit.
+      const declared = Object.prototype.hasOwnProperty.call(dshEnv ?? {}, "WSLENV");
+      const base = declared
+        ? env.WSLENV
+        : (typeof inheritedWslenv === "string" && inheritedWslenv.length > 0 ? inheritedWslenv : env.WSLENV);
+      // Windows Terminal's own value ends with a trailing ':' and the caller's
+      // may too, so split/normalise instead of string-concatenating -- a naive
+      // join yields an empty entry ("A:B::DSH_X"), which WSL flags as malformed.
+      const parts = typeof base === "string" ? base.split(":") : [];
+      env.WSLENV = [...parts, ...keys.filter((k) => k !== "WSLENV").flatMap((k) => k.split(":"))]
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .join(":");
     }
   }
   return env;
