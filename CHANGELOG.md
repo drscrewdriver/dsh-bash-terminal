@@ -2,11 +2,13 @@
 
 ## 0.3.17 (2026-09-13)
 
+- **交互式 `terminal` 工具改用共享 `buildEnv`**：`lib/terminal.js` 原先内联拼装 PTY 环境（`{ NO_COLOR, TERM, PAGER, GIT_PAGER, ...ctx.shellEnv.collect() }`），绕过了 `buildEnv` 的 `MSYSTEM=MINGW64` 注入，于是 msys2 交互会话以默认 MSYS 环境 source `/etc/profile`——`shell` 工具能用 `gcc`/`make`，`terminal` 里 `/mingw64/bin` 却不在 PATH 上。现在 PTY 环境同样走 `buildEnv(shell, ctx.shellEnv.collect(exec))`（WSL 的 `WSLENV` 合并逻辑保持原样），登录旗标不变。真实 PTY 已验证：提示符从 `MSYS` 变为 `MINGW64 ~`，`MSYSTEM=MINGW64` 与 `/mingw64/bin/gcc` 均成立。
+- **构建可复现**：`scripts/build-client.mjs` 显式固定 `tsconfigRaw: { compilerOptions: { target: "ES2022", useDefineForClassFields: true } }`（即仓库根 tsconfig 原本提供的值），不再让 esbuild 从入口向上搜索 tsconfig——此前仓库内构建会继承根 `tsconfig.json` 并在 bundle 前面多出一行 `"use strict";`，而仓库外 worktree 用同一份源码构建则没有，同一源码产出两种已提交产物。唯一可见差异是那行多余 `"use strict";`（惰性：core 被 loader 包装进函数表达式，本就不是指令序言）。固定后重新构建的输出与本分支已提交的 bundle 逐字节一致。
 - **MSYS2 成为第四个终端后端**（`SHELLS` = `powershell` / `gitbash` / `msys2` / `wsl`，顺序即目录顺序）：新增 `msys2Path` 配置项、`candidateMsys2Paths()`、`buildArgv` 的 `msys2` 分支、交互式 `terminalArgv` 分支、`SHELL_DESCRIPTIONS.msys2`，以及 `msys2-unconfined` 沙箱结果（与 Git Bash 同理：DSH 的 Windows ACL 受限令牌 runner 无法承载 Cygwin/MSYS2 运行时）。
 - **后端用 `bash.exe` + `-lc`，不用 `msys2.exe` + `-c`**：`msys2.exe` 是分配控制台的 Cygwin 启动器，在管道 stdio 下对任何命令都返回 exit 0 且 stdout/stderr 各 0 字节（在 MSYS2 bash 5.3.15 上实测）——看着成功、实际什么都没跑。候选路径改为 `usr\bin\bash.exe` → `bin\bash.exe` → PATH 派生项，`msys2.exe` 仅作为文档化的最后兜底（每台机器上可用的 `bash.exe` 都会优先命中）。`-lc` 而非 `-c`：登录 shell 会 source `/etc/profile`，这才是把 `/usr/bin` 和 `/mingw64/bin` 放进 PATH 的东西；裸 `-c` 下 `tr` / `sed` / `gcc` 全部 command not found。
 - `buildEnv("msys2", ...)` 注入 `MSYSTEM=MINGW64`（用户显式传值优先），让 `/mingw64/bin`（gcc、make 等）进入 PATH；只对 msys2 生效，gitbash/wsl 不受影响。
 - 客户端「默认终端」设置行补上 MSYS2 选项（此前只有服务端支持，UI 里选不到），中文/英文词典各加 `shell.msys2: "MSYS2"`。
-- 测试：`buildArgv("msys2")` 断言 `-lc`、`buildEnv` 断言 `MSYSTEM=MINGW64` 且显式值优先、候选列表中每个 `bash.exe` 必须排在 `msys2.exe` 之前、解析结果必须落在 `bash.exe`、apply 用例覆盖 msys2 的 argv/env/沙箱，client 用例新增「宿主 `SHELLS` 与客户端列表 + 双语词典 + 描述」一致性漂移守卫。
+- 测试：`buildArgv("msys2")` 断言 `-lc`、`buildEnv` 断言 `MSYSTEM=MINGW64` 且显式值优先、候选列表中每个 `bash.exe` 必须排在 `msys2.exe` 之前、解析结果必须落在 `bash.exe`、apply 用例覆盖 msys2 的 argv/env/沙箱，`test/terminal.mjs` 新增真实 PTY 断言（msys2 会话必须带 `MSYSTEM=MINGW64` 且 PATH 含 `/mingw64/bin/gcc`），client 用例新增「宿主 `SHELLS` 与客户端列表 + 双语词典 + 描述」一致性漂移守卫。
 
 ## 0.3.15 (2026-09-11)
 

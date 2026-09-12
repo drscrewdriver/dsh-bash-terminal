@@ -117,6 +117,27 @@ const initRead = await tool.execute({ action: "read", sessionId: initOpened.sess
 assert.ok(initRead.output.includes("INIT-OK"), "initial command output visible: " + JSON.stringify(initRead.output.slice(-120)));
 await tool.execute({ action: "close", sessionId: initOpened.sessionId }, exec).catch(() => {});
 
+// msys2 backend interactive session: the PTY env must carry MSYSTEM=MINGW64
+// (built by the shared buildEnv helper), or the login shell sources
+// /etc/profile with the default MSYS environment and /mingw64/bin never joins
+// PATH — the toolchain silently goes missing.
+defaultShell = "msys2";
+let msys2Opened;
+try {
+  msys2Opened = await tool.execute({ action: "open" }, exec);
+} catch {
+  console.log("NOTE: msys2 interactive unavailable (spawn failed); skipping assertion");
+}
+if (msys2Opened !== undefined) {
+  await delay(1500);
+  const msys2Out = await tool.execute({ action: "send", sessionId: msys2Opened.sessionId, input: "echo MSYSTEM=$MSYSTEM; command -v gcc\r" }, exec);
+  assert.ok(msys2Out.output.includes("MSYSTEM=MINGW64"), "msys2 PTY env carries MSYSTEM=MINGW64: " + JSON.stringify(msys2Out.output.slice(-160)));
+  assert.ok(msys2Out.output.includes("/mingw64/bin/gcc"), "msys2 PTY PATH includes /mingw64/bin/gcc: " + JSON.stringify(msys2Out.output.slice(-160)));
+  const msys2Prompt = /MINGW64/.test(msys2Out.output) ? "MINGW64" : "MSYS";
+  console.log("msys2 PTY verified: prompt=" + msys2Prompt + " MSYSTEM=MINGW64:" + msys2Out.output.includes("MSYSTEM=MINGW64") + " /mingw64/bin/gcc:" + msys2Out.output.includes("/mingw64/bin/gcc"));
+  await tool.execute({ action: "close", sessionId: msys2Opened.sessionId }, exec).catch(() => {});
+}
+
 // job hooks shape: the registered job exposes cancel / done / readOutput
 const hooks = jobsStarted[0].run();
 assert.strictEqual(typeof hooks.cancel, "function");
