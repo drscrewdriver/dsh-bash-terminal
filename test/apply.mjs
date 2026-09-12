@@ -120,6 +120,17 @@ const gitConfined = await registered.execute({ command: "echo hi", description: 
 assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "gitbash not confined under read-only");
 assert.strictEqual(gitConfined.sandbox.enforcement, "gitbash-unconfined");
 
+// 8b) sandbox: read-only + msys2 -> not confined (same Cygwin runtime as Git Bash)
+userDefaultShell = "msys2";
+spawnCalls.length = 0;
+const msysConfined = await registered.execute({ command: "echo hi", description: "t" }, exec);
+assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "msys2 not confined under read-only");
+assert.strictEqual(msysConfined.sandbox.enforcement, "msys2-unconfined");
+// msys2 runs through a real bash.exe with -lc, and gets MSYSTEM for MINGW64.
+assert.ok(spawnCalls[0].argv[0].toLowerCase().endsWith("bash.exe"), "msys2 argv[0] is bash.exe: " + spawnCalls[0].argv[0]);
+assert.ok(spawnCalls[0].argv.includes("-lc"), "msys2 uses the login shell -lc: " + JSON.stringify(spawnCalls[0].argv));
+assert.strictEqual(spawnCalls[0].env.MSYSTEM, "MINGW64", "msys2 exports MSYSTEM=MINGW64");
+
 // 9) sandbox escalation: sandbox_permissions + justification widens policy
 userDefaultShell = "powershell";
 sandboxMode = "read-only";

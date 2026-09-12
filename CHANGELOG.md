@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.16 (2026-09-13)
+
+- **新增 MSYS2 终端后端**（`SHELLS` 第 3 位：`powershell` / `gitbash` / `msys2` / `wsl`），设置页「默认终端」现在可选 MSYS2。
+- **设置页补上 MSYS2 选项**：`SHELLS` 数组与中英文词典新增 `shell.msys2`，顺位在 Git Bash 与 WSL 之间（此前 MSYS2 只加在了服务端，Web UI 看不到）。
+- 服务端新增 `msys2Path` 配置项，并新增 `candidateMsys2Paths()`：**真实 `bash.exe` 优先**（`C:\msys64\usr\bin\bash.exe`、`C:\msys64\bin\bash.exe`，再到 PATH 里的 msys64/mingw64 条目），`C:\msys64\msys2.exe` 仅作**兜底**排在最后。`msys2.exe` 是分配控制台的 Cygwin 启动器：管道 stdio 下 exit 0 但 **stdout/stderr 全是 0 字节**（本机实测，bash 5.3.15），任何可用的 `bash.exe` 都必须优先于它。
+- msys2 用 **`-lc`**（`bash -lc <cmd>`）而非 `-c`：只有登录 shell 会读取 `/etc/profile`，把 `/usr/bin` 和 `/mingw64/bin` 放进 PATH；裸 `-c` 下 `tr`/`sed`/`gcc` 全部 command not found。
+- msys2 后端注入 **`MSYSTEM=MINGW64`**（用户显式提供时以用户值优先），让 `/etc/profile` 选中 MINGW64 环境，`/mingw64/bin`（gcc、make）进入 PATH。
+- msys2 与 Git Bash 同属 Cygwin/MSYS2 运行时，**不经 `ctx.sandbox.confine` 包装**，结果报告 `enforcement: msys2-unconfined`；`terminal` 工具的 msys2 交互会话用登录 shell `bash -l`。
+- 实测（`bash.exe -lc`）：`command -v gcc` → `/mingw64/bin/gcc`，`MSYSTEM=MINGW64`，exit 0 且有输出。
+- 单元测试新增覆盖：`buildArgv("msys2")` 必须用 `-lc`、`buildEnv("msys2").MSYSTEM === "MINGW64"`（显式值优先、不泄漏到其它后端）、`candidateMsys2Paths` 中**每个** `bash.exe` 都排在 `msys2.exe` 之前、解析出的 msys2 后端必须是 `bash.exe`、`SHELLS` 顺序、msys2 工具描述不得宣传 `msys2.exe -c`。
+
 ## 0.3.15 (2026-09-11)
 
 - **适配 DSH 0.1.5-rc.1**. 客户端模块表（`PLATFORM_MODULES`）把 `@deepseek-ai/dsh-client-runtime` 改名为 `@deepseek-ai/dsh-client-store`，并且只按**精确裸名**命中（没有 `/client` 子路径，也没有包工厂兜底）。客户端 bundle 原先 `require("@deepseek-ai/dsh-client-runtime/client")`，在 0.1.5 下必然 miss → Web GUI 启动报 `Failed to load plugins / require(...) missed the module table`。现改为 `@deepseek-ai/dsh-client-store`，bundle 的 4 个 require（`react`、`react/jsx-runtime`、`dsh-client-store`、`dsh-client-ui-primitives`）全部落在平台种子表内，不需要 `dsh.client.external`。

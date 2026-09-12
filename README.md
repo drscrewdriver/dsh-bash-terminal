@@ -4,19 +4,20 @@
 
 ![test](https://github.com/MAXeaglet/dsh-bash-terminal/actions/workflows/test.yml/badge.svg)
 
-DSH（DeepSeek Harness）插件：一个 `shell` 工具，在 Windows 上统一执行 **PowerShell / Git Bash / WSL** 三种终端命令。
+DSH（DeepSeek Harness）插件：一个 `shell` 工具，在 Windows 上统一执行 **PowerShell / Git Bash / MSYS2 / WSL** 四种终端命令。
 
 | 后端 | 实际执行 | 语法 / 路径 | 环境变量 |
 |------|----------|-------------|----------|
 | `powershell`（默认） | `pwsh -NoLogo -NoProfile -NonInteractive -Command <cmd>` | PowerShell；`C:\...` | `$env:NAME` |
 | `gitbash` | Git for Windows `bash -lc <cmd>` | POSIX；`/d/WorkSpace`；PATH 含 `/usr/bin`、`/mingw64/bin` | `$NAME` |
+| `msys2` | MSYS2 `bash -lc <cmd>`（`C:\msys64\usr\bin\bash.exe`，注入 `MSYSTEM=MINGW64`） | POSIX；`/c/...`；PATH 含 `/usr/bin`、`/mingw64/bin` | `$NAME` |
 | `wsl` | `wsl [-d <distro>] -e bash -lc <cmd>` | Linux；`/mnt/d/...` | `$NAME`（经 WSLENV） |
 
 每次调用都启动全新 shell：**不保留状态**（cwd / 变量 / 别名）——请传 `workdir` 而不是用 `cd`。
 
 ## 设计要点
 
-- **终端由用户决定，AI 无法更改**：Web UI 设置页（设置 → 通用）出现"默认终端"下拉（PowerShell / Git Bash / WSL）；`shell` 工具永远只使用该设置，不暴露终端参数给模型。设置通过 DSH settings 系统持久化（settings.yaml）。
+- **终端由用户决定，AI 无法更改**：Web UI 设置页（设置 → 通用）出现"默认终端"下拉（PowerShell / Git Bash / MSYS2 / WSL）；`shell` 工具永远只使用该设置，不暴露终端参数给模型。设置通过 DSH settings 系统持久化（settings.yaml）。
 - **不占用 `ctx.shell` 能力接缝**：DSH 自带的沙箱化 `pwsh` 工具保持原样可用；本插件的 `shell` 工具是**额外的**多终端入口。
 - 通过共享的 `ctx.subprocess` seam 派生进程：进程树终止（Windows `taskkill /T`）、SIGTERM→grace→SIGKILL、输出 spill 文件，与官方 `dsh-tool-bash` / `dsh-tool-pwsh` 行为一致。
 - 后台任务注册进通用 `jobs` registry，支持 `run_in_background` / `job_output` / `job_kill`。
@@ -78,11 +79,12 @@ node "$env:APPDATA\nvm\v24.16.0\node_modules\@deepseek-ai\dsh\lib\bin.js" --prof
 
 ## 使用
 
-**用户在 Web UI 设置默认终端**：打开设置（齿轮）→ 通用 →「默认终端」下拉，选择 PowerShell / Git Bash / WSL 之一。改动即时生效并持久化。
+**用户在 Web UI 设置默认终端**：打开设置（齿轮）→ 通用 →「默认终端」下拉，选择 PowerShell / Git Bash / MSYS2 / WSL 之一。改动即时生效并持久化。
 
 模型看到 `shell` 工具后，执行命令时自动使用你选择的终端（工具不暴露终端参数，模型无法更改你的选择）：
 
 - 默认终端 = Git Bash 时：`shell(command: "git status")` 走 Git Bash
+- 默认终端 = MSYS2 时：`shell(command: "gcc --version")` 走 MSYS2（`C:\msys64\usr\bin\bash.exe -lc <command>`，POSIX 语法，PATH 含 `/usr/bin` 与 `/mingw64/bin`，自带完整 GCC/mingw64 工具链）
 - 默认终端 = WSL 时：`shell(command: "ls -la /mnt/d/WorkSpace")` 走 WSL；传 `distro: "Ubuntu"` 可指定发行版
 - 默认终端 = PowerShell 时：`shell(command: "Get-Process node")` 走 PowerShell
 
@@ -107,6 +109,7 @@ node "$env:APPDATA\nvm\v24.16.0\node_modules\@deepseek-ai\dsh\lib\bin.js" --prof
 | `maxTimeoutMs` | 600000 | 调用方 timeoutMs 上限 |
 | `pwshPath` | 自动探测 | 固定 pwsh.exe 路径 |
 | `gitBashPath` | 自动探测 | 固定 git bash.exe 路径 |
+| `msys2Path` | 自动探测 | 固定 MSYS2 bash.exe 路径（默认 `C:\msys64\usr\bin\bash.exe`） |
 | `wslPath` | 自动探测 | 固定 wsl.exe 路径 |
 
 ## 发布（npm）
@@ -150,13 +153,14 @@ powershell -ExecutionPolicy Bypass -File install.ps1 uninstall
 - 每次调用解析当前沙箱策略；`danger-full-access` 会话直接执行（不包装）。
 - PowerShell 后端经 `ctx.sandbox.confine` 包装 argv —— 与官方 executor 相同的 **fail-closed** 语义：请求受限模式但无可用后端时抛 `SandboxUnavailableError`，拒绝裸跑。
 - Git Bash 后端不包装：DSH 的 Windows ACL 受限令牌 runner 与 Cygwin/MSYS2 不兼容（bash 启动即因 `CreateFileMapping` Win32 error 5 终止），因此 Git Bash 在受限模式下也不经沙箱包装；结果报告 `enforcement: gitbash-unconfined`。
+- MSYS2 后端不包装：与 Git Bash 同属 Cygwin/MSYS2 运行时，同样无法在 Windows ACL 受限令牌 runner 下启动；结果报告 `enforcement: msys2-unconfined`。
 - WSL 后端不包装：WSL 独立 Linux 虚拟机本身就是隔离（结果报告 `enforcement: wsl-isolation`）。
 - 受限模式下被沙箱拒绝时，结果携带官方标记 `[sandbox: file access denied under <mode> mode]` 与同轮升级提示；模型可凭 `sandbox_permissions` + `justification` 发起一次升级（经 `ctx.approval` 用户审批），与官方 bash/pwsh 工具完全一致。
-- 注意：DSH 的 Windows ACL runner 可用时，PowerShell 的受限模式会经它包装；Git Bash 因 Cygwin/MSYS2 不兼容而保持不包装。
+- 注意：DSH 的 Windows ACL runner 可用时，PowerShell 的受限模式会经它包装；Git Bash 与 MSYS2 因 Cygwin/MSYS2 不兼容而保持不包装。
 
 ## ⚠️ 安全说明
 
-`shell` 工具在受限模式下：PowerShell 会经 `ctx.sandbox.confine` 包装（fail-closed）；Git Bash 因 Cygwin/MSYS2 与 Windows ACL 受限令牌不兼容而**不包装**（与 dsh 进程同权限）；WSL 因独立 Linux VM 不包装。它是**额外的多终端入口**，不享受官方 `pwsh` 工具的 ConstrainedLanguage 限制。DSH 的文件操作工具（read/write/edit）仍受文件沙箱约束。仅在你信任的会话中使用；需要受沙箱保护的 PowerShell 时请继续使用官方 `pwsh` 工具。
+`shell` 工具在受限模式下：PowerShell 会经 `ctx.sandbox.confine` 包装（fail-closed）；Git Bash 与 MSYS2 因 Cygwin/MSYS2 与 Windows ACL 受限令牌不兼容而**不包装**（与 dsh 进程同权限）；WSL 因独立 Linux VM 不包装。它是**额外的多终端入口**，不享受官方 `pwsh` 工具的 ConstrainedLanguage 限制。DSH 的文件操作工具（read/write/edit）仍受文件沙箱约束。仅在你信任的会话中使用；需要受沙箱保护的 PowerShell 时请继续使用官方 `pwsh` 工具。
 
 ## 交互终端已知限制（ConPTY）
 
@@ -169,6 +173,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1 uninstall
 
 - WSL 后台进程在超时/中断后可能在发行版内短暂残留（WSL 实例在最后一个进程退出后自动关闭）。
 - Git Bash 是 msys2 环境，与 WSL 的 Linux 行为存在差异（路径映射、包可用性）。
+- MSYS2 后端走 `C:\msys64\usr\bin\bash.exe -lc`，**不是** `C:\msys64\msys2.exe`：`msys2.exe` 是分配控制台窗口的 Cygwin 启动器，在管道 stdio 下（本插件正是这样 spawn 的）会以 exit 0 返回**零字节输出**，命令静默失败。因此它只排在候选列表最后作兜底，可用时永远优先 `bash.exe`。`-lc` 而非 `-c`：只有登录 shell 会读 `/etc/profile`，把 `/usr/bin` 与 `/mingw64/bin` 加进 PATH，裸 `-c` 下 `tr`/`sed`/`gcc` 全是 command not found。
+- MSYS2 下会注入 `MSYSTEM=MINGW64`（用户显式设置的值优先），以便 `/etc/profile` 选中 MINGW64 环境，让 `/mingw64/bin` 里的 gcc、make 等可用。
 - 本插件仅在 `win32` 平台注册工具。
 
 ## 测试
