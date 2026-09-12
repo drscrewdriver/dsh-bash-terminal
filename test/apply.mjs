@@ -80,6 +80,18 @@ const wslPath = (process.env.SystemRoot ?? "C:\\Windows").replace(/\\$/, "") + "
 assert.deepStrictEqual(spawnCalls[0].argv, [wslPath, "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.strictEqual(spawnCalls[0].cwd, "D:\\WorkSpace\\projects");
 assert.ok(spawnCalls[0].env.WSLENV.includes("DSH_WEB_URL"), "WSLENV should carry DSH vars");
+assert.ok(spawnCalls[0].env.WSLENV.split(":").every((p) => p.length > 0), "WSLENV has no empty entry: " + JSON.stringify(spawnCalls[0].env.WSLENV));
+// WSLENV is an allow-list that already exists for unrelated reasons (Windows
+// Terminal's WT_SESSION / WT_PROFILE_ID): this host forwards its own
+// process.env.WSLENV, so whatever it holds must survive the DSH_* layering.
+// Guarded on the ambient value being set so the test stays valid in a clean CI.
+if (typeof process.env.WSLENV === "string" && process.env.WSLENV.length > 0) {
+  const parent = process.env.WSLENV.split(":").map((p) => p.trim()).filter((p) => p.length > 0);
+  const produced = spawnCalls[0].env.WSLENV.split(":");
+  for (const entry of parent) {
+    assert.ok(produced.includes(entry), `inherited WSLENV entry ${entry} must survive: ` + JSON.stringify(spawnCalls[0].env.WSLENV));
+  }
+}
 
 // 4) timeout clamp: timeoutMs beyond max is capped
 userDefaultShell = "powershell";

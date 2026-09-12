@@ -25,6 +25,40 @@ assert.ok(wslEnv.WSLENV.includes("DSH_WEB_URL"));
 assert.ok(wslEnv.WSLENV.includes("DSH_TEST"));
 assert.strictEqual(buildEnv("wsl", undefined).WSLENV, undefined);
 
+// ---- WSLENV layering --------------------------------------------------------
+// WSLENV normally already exists for unrelated reasons (Windows Terminal exports
+// "WT_SESSION:WT_PROFILE_ID:"). The DSH keys must be LAYERED onto that inherited
+// allow-list, never replace it, or every WSL call cuts WT's vars off. The
+// inherited value is passed explicitly so these assertions do not depend on the
+// ambient environment (this host really does have WSLENV set).
+const layered = buildEnv("wsl", { DSH_WEB_URL: "http://x" }, "WT_SESSION:WT_PROFILE_ID:");
+assert.ok(layered.WSLENV.includes("WT_SESSION") && layered.WSLENV.includes("WT_PROFILE_ID"),
+  "inherited WSLENV entries preserved: " + JSON.stringify(layered.WSLENV));
+assert.ok(layered.WSLENV.includes("DSH_WEB_URL"), "DSH key appended to the inherited list: " + JSON.stringify(layered.WSLENV));
+// Exact shape: the inherited trailing ":" must not become a malformed empty entry.
+assert.strictEqual(layered.WSLENV, "WT_SESSION:WT_PROFILE_ID:DSH_WEB_URL");
+// An explicit caller-supplied WSLENV wins over the inherited one.
+assert.strictEqual(buildEnv("wsl", { WSLENV: "CALLER_ONLY", DSH_WEB_URL: "http://x" }, "WT_SESSION:").WSLENV,
+  "CALLER_ONLY:DSH_WEB_URL", "explicit caller WSLENV wins and is not duplicated");
+// WSLENV is a key of dshEnv and must not itself be appended as a crossed var.
+assert.ok(!buildEnv("wsl", { WSLENV: "CALLER_ONLY" }, undefined).WSLENV.split(":").includes("WSLENV"),
+  "WSLENV is not appended to itself");
+// No WSLENV for the other backends.
+assert.strictEqual(buildEnv("gitbash", { DSH_WEB_URL: "http://x" }, "WT_SESSION:").WSLENV, undefined, "no WSLENV for gitbash");
+assert.strictEqual(buildEnv("msys2", { DSH_WEB_URL: "http://x" }, "WT_SESSION:").WSLENV, undefined, "no WSLENV for msys2");
+// The third argument is explicit throughout, so nothing here reads the ambient
+// host WSLENV (this machine really has one set). An empty inherited list means
+// the DSH key is simply the whole list.
+assert.strictEqual(buildEnv("wsl", { DSH_WEB_URL: "http://x" }, "").WSLENV, "DSH_WEB_URL", "empty inherited list yields just the DSH key");
+// Omitting the argument falls back to the default parameter (the ambient
+// process.env.WSLENV), so assert the shape instead of a host-specific literal.
+const ambient = buildEnv("wsl", { DSH_WEB_URL: "http://x" }, undefined).WSLENV;
+assert.ok(ambient.endsWith("DSH_WEB_URL"), "DSH key appended to the ambient inherited list: " + JSON.stringify(ambient));
+if (typeof process.env.WSLENV === "string" && process.env.WSLENV.length > 0) {
+  assert.strictEqual(ambient, buildEnv("wsl", { DSH_WEB_URL: "http://x" }, process.env.WSLENV).WSLENV,
+    "omitted argument inherits process.env.WSLENV");
+}
+
 assert.strictEqual(renderResult({ stdout: { text: "hello", truncated: false }, stderr: { text: "", truncated: false }, exitCode: 0, signal: null, timedOut: false, timeoutMs: 1000 }), "hello");
 assert.ok(renderResult({ stdout: { text: "out", truncated: false }, stderr: { text: "err", truncated: false }, exitCode: 3, signal: null, timedOut: false, timeoutMs: 1000 }).includes("[stderr]"));
 assert.ok(renderResult({ stdout: { text: "out", truncated: false }, stderr: { text: "", truncated: false }, exitCode: 3, signal: null, timedOut: false, timeoutMs: 1000 }).includes("[exit code: 3]"));

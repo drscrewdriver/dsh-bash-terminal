@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.18 (2026-09-13)
+
+- **修复：`buildEnv` 会重建 WSLENV 白名单，而不是在其之上叠加**。`WSLENV` 是 WSL 的变量放行清单，通常**早已存在**且与本插件无关（Windows Terminal 会导出形如 `WT_SESSION:WT_PROFILE_ID:` 的值）。原实现只用 `dshEnv` 计算 `WSLENV`，于是每次 WSL 调用都会把 Windows Terminal 的会话/配置文件变量从清单里抹掉。现改为在继承值之上**分层追加** DSH 键；调用方显式提供的 `WSLENV` 优先于继承值。
+  - 两个关键细节（都不是能用字符串拼接糊过去的）：继承值通常**以 `:` 结尾**，直接 `[existing, keys.join(":")].join(":")` 会产出形如 `WT_SESSION:WT_PROFILE_ID::DSH_WEB_URL` 的畸形空条目；且 `WSLENV` 本身也是 `dshEnv` 的一个键，天真的追加会写出 `...:WSLENV`。现改为按 `:` split → trim → 过滤空项 → 重新 join，并显式排除 `WSLENV` 键自身。
+  - 实测旧实现的两个坏结果：`WT_SESSION:WT_PROFILE_ID::WSLENV:DSH_WEB_URL`（双冒号 + 自我追加）、以及只有 `DSH_WEB_URL:DSH_TEST`（WT 变量被抹掉）。
+- `terminal` 的 PTY 路径现在把继承值**显式**交给 `buildEnv(shell, dshEnv, process.env.WSLENV)`：DSH 的 `spawnTerminal` 会整体替换子进程环境，不显式传递的话 WSL 交互会话同样会丢失该清单。
+- 测试新增：`WT_SESSION`/`WT_PROFILE_ID` 必须存活、DSH 键仍被追加、精确结果 `WT_SESSION:WT_PROFILE_ID:DSH_WEB_URL`（无空条目）、调用方显式 `WSLENV` 优先、`WSLENV` 不被自我追加、gitbash/msys2 不产生 `WSLENV`；`apply` 与 `terminal` 两条路径各自校验继承项在真实 `process.env.WSLENV` 下存活。
+
 ## 0.3.17 (2026-09-13)
 
 - **修复：交互式 `terminal` 工具的 msys2 会话拿不到 `MSYSTEM`**。`lib/terminal.js` 原先**内联复制**了一份 PTY 环境对象（`{ NO_COLOR, TERM, PAGER, GIT_PAGER, ...shellEnv }`），绕过了 `buildEnv` 的 `MSYSTEM=MINGW64` 注入：`terminal` + msys2 会以默认 MSYS 环境读取 `/etc/profile`，`/mingw64/bin`（gcc、make）不在 PATH 上，而后端表面看起来一切正常。现改为复用与 `shell` 工具同一个 `buildEnv(shell, ctx.shellEnv.collect(exec))`（顺带去掉重复的 WSLENV 计算，改由 `buildEnv` 统一负责），PTY 会话与一次性命令的环境从此完全一致。登录 flag `-l` 保持不变（实测确实会读取 `/etc/profile`）。

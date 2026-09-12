@@ -1,6 +1,7 @@
 // Interactive terminal test: drive the real node-pty through the plugin's
 // registry + tool surface (fake ctx, real PTY backend).
 import { createTerminalRegistry, terminalTool, terminalArgv } from "../lib/terminal.js";
+import { buildEnv } from "../lib/index.js";
 import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
 import os from "node:os";
@@ -228,6 +229,27 @@ await assert.rejects(() => tool.execute({ action: "send", sessionId: opened2.ses
 // validation
 await assert.rejects(() => tool.execute({ action: "bogus" }, exec), /must be one of|invalid action/);
 await assert.rejects(() => tool.execute({ action: "send", sessionId: "nope", input: "x" }, exec), /not found/);
+
+// WSL PTY env: DSH's spawnTerminal replaces the child env wholesale, so the
+// inherited WSLENV allow-list (Windows Terminal's WT_SESSION / WT_PROFILE_ID)
+// must be handed to buildEnv explicitly rather than read implicitly at spawn
+// time, or a WSL session loses it. Placed last so the session it opens does not
+// shift the jobsStarted indexes asserted above.
+defaultShell = "wsl";
+const wslEnvOpened = await tool.execute({ action: "open", distro: "Ubuntu" }, exec);
+assert.strictEqual(wslEnvOpened.shell, "wsl");
+// Mirror the exact call lib/terminal.js makes (three arguments).
+const wslPtyEnv = buildEnv("wsl", shellEnv.collect(exec), process.env.WSLENV);
+if (typeof process.env.WSLENV === "string" && process.env.WSLENV.length > 0) {
+  const inherited = process.env.WSLENV.split(":").map((p) => p.trim()).filter((p) => p.length > 0);
+  const produced = String(wslPtyEnv.WSLENV ?? "").split(":");
+  for (const entry of inherited) {
+    assert.ok(produced.includes(entry), `a WSL PTY session must inherit WSLENV entry ${entry}: ` + JSON.stringify(wslPtyEnv.WSLENV));
+  }
+}
+assert.ok(String(wslPtyEnv.WSLENV ?? "").includes("DSH_WEB_URL"), "PTY WSLENV carries DSH vars: " + JSON.stringify(wslPtyEnv.WSLENV));
+assert.ok(String(wslPtyEnv.WSLENV ?? "").split(":").every((p) => p.length > 0), "PTY WSLENV has no empty entry: " + JSON.stringify(wslPtyEnv.WSLENV));
+await tool.execute({ action: "close", sessionId: wslEnvOpened.sessionId }, exec).catch(() => {});
 
 try { rmSync(workdir, { recursive: true, force: true }); } catch {}
 
