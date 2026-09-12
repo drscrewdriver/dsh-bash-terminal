@@ -334,8 +334,9 @@ export function terminalTool(
           // MSYSTEM=MINGW64 injection here too, or the login shell sources
           // /etc/profile with the default MSYS environment and /mingw64/bin
           // (gcc, make) never joins PATH. DSH's spawnTerminal replaces the child
-          // environment with exactly this object, so the inherited WSLENV has to
-          // be handed over explicitly or WSL sessions lose it.
+          // environment with exactly this object (childEnv(spec.env)), so the
+          // inherited WSLENV is passed through explicitly for the WSL allow-list;
+          // for every other backend buildEnv ignores the third argument.
           const env = buildEnv(shell, ctx.shellEnv.collect(exec), process.env.WSLENV);
           const session = await registry.open({ argv, shell, cwd, env, rows: DEFAULT_ROWS, cols: DEFAULT_COLS, distro: args.distro, initial: args.command !== undefined ? args.command + "\r" : undefined });
           return { kind: "open", sessionId: session.id, pid: session.handle.pid, shell, output: session.buffer.snapshot() };
