@@ -21,6 +21,13 @@ await build({
   outfile: join(root, "dist", "client.core.js"),
   external: ["react", "react/jsx-runtime", "react-dom", "@deepseek-ai/*"],
   jsx: "automatic",
+  // Pin the compiler options instead of letting esbuild discover a tsconfig by
+  // walking up from the entry point: in-repo builds otherwise pick up the root
+  // tsconfig.json and prepend "use strict";, while the same source built from a
+  // worktree (or any checkout without that file above it) does not - same
+  // source, two different artifacts. These are the values the root tsconfig
+  // supplied, so the only observable delta is the stray "use strict"; going away.
+  tsconfigRaw: { compilerOptions: { target: "ES2022", useDefineForClassFields: true } },
   logLevel: "warning"
 });
 

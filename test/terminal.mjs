@@ -118,6 +118,29 @@ const initRead = await tool.execute({ action: "read", sessionId: initOpened.sess
 assert.ok(initRead.output.includes("INIT-OK"), "initial command output visible: " + JSON.stringify(initRead.output.slice(-120)));
 await tool.execute({ action: "close", sessionId: initOpened.sessionId }, exec).catch(() => {});
 
+// msys2 interactive session (REAL PTY): the tool must hand the PTY the SAME env
+// the shell tool uses, i.e. buildEnv's MSYSTEM=MINGW64 injection. The `-l` login
+// shell sources /etc/profile, which selects the MINGW64 environment only when
+// MSYSTEM says so; without it the session runs in the bare MSYS environment and
+// /mingw64/bin (gcc, make) is absent from PATH while the `shell` tool still works.
+defaultShell = "msys2";
+const msys2Available = existsSync("C:/msys64/usr/bin/bash.exe");
+if (!msys2Available) {
+  console.log("NOTE: MSYS2 not installed at C:/msys64; skipping the msys2 PTY env assertion");
+} else {
+  const msysOpened = await tool.execute({ action: "open", command: "echo PTY-MARKER; echo MSYSTEM=$MSYSTEM; command -v gcc" }, exec);
+  assert.strictEqual(msysOpened.shell, "msys2");
+  await delay(2500);
+  const msysOut = await tool.execute({ action: "read", sessionId: msysOpened.sessionId }, exec);
+  const msysText = msysOpened.output + msysOut.output;
+  console.log("MSYS2 PTY evidence: " + JSON.stringify(msysText.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, "").slice(-260)));
+  assert.ok(msysText.includes("MSYSTEM=MINGW64"),
+    "msys2 PTY session must get buildEnv's MSYSTEM=MINGW64 (if this fails, the terminal env plumbing stopped using buildEnv and the session fell back to the bare MSYS environment): " + JSON.stringify(msysText.slice(-300)));
+  assert.ok(msysText.includes("/mingw64/bin/gcc"),
+    "msys2 PTY session must have /mingw64/bin on PATH (gcc reachable): " + JSON.stringify(msysText.slice(-300)));
+  await tool.execute({ action: "close", sessionId: msysOpened.sessionId }, exec).catch(() => {});
+}
+
 // job hooks shape: the registered job exposes cancel / done / readOutput
 const hooks = jobsStarted[0].run();
 assert.strictEqual(typeof hooks.cancel, "function");

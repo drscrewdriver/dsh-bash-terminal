@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.17 (2026-09-13)
+
+- **修复：交互式 `terminal` 工具的 msys2 会话拿不到 `MSYSTEM`**。`lib/terminal.js` 原先**内联复制**了一份 PTY 环境对象（`{ NO_COLOR, TERM, PAGER, GIT_PAGER, ...shellEnv }`），绕过了 `buildEnv` 的 `MSYSTEM=MINGW64` 注入：`terminal` + msys2 会以默认 MSYS 环境读取 `/etc/profile`，`/mingw64/bin`（gcc、make）不在 PATH 上，而后端表面看起来一切正常。现改为复用与 `shell` 工具同一个 `buildEnv(shell, ctx.shellEnv.collect(exec))`（顺带去掉重复的 WSLENV 计算，改由 `buildEnv` 统一负责），PTY 会话与一次性命令的环境从此完全一致。登录 flag `-l` 保持不变（实测确实会读取 `/etc/profile`）。
+  - 实测（真实 node-pty）：prompt 从 `MSYS` 变为 `MINGW64`，`MSYSTEM=MINGW64`，`command -v gcc` → `/mingw64/bin/gcc`。
+- **构建确定性**：`scripts/build-client.mjs` 不再让 esbuild 从入口点向上探测 `tsconfig.json`（主仓库根目录那份会让同一份源码产出带 `"use strict";` 前缀的另一种 bundle，而 worktree 里构建则不带），改为显式固定 `tsconfigRaw` 的 `target: ES2022` + `useDefineForClassFields: true`（即根 tsconfig 实际提供的值）。行为不变，唯一可观测差异是那行多余的 `"use strict";` 消失；已验证产物与已提交版本逐字节一致。
+- 回归测试：`test/terminal.mjs` 新增真实 PTY 断言——用 msys2 打开会话并执行 `echo MSYSTEM=$MSYSTEM; command -v gcc`，要求输出同时出现 `MSYSTEM=MINGW64` 与 `/mingw64/bin/gcc`，防止 PTY 环境再次绕开 `buildEnv`。
+- `terminal` 工具自身的 description 已在 0.3.16 列出 msys2，无需再改。
+
 ## 0.3.16 (2026-09-13)
 
 - **新增 MSYS2 终端后端**（`SHELLS` 第 3 位：`powershell` / `gitbash` / `msys2` / `wsl`），设置页「默认终端」现在可选 MSYS2。
