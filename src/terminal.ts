@@ -1,0 +1,553 @@
+// dsh-bash-terminal: interactive terminal tool over the official PTY seam.
+// ctx.subprocess.spawnTerminal (node-pty under the hood) allocates a real
+// terminal; this module owns model-facing sessions: open / send / read /
+// signal (Ctrl+C etc.) / close. The backend follows the user's default
+// terminal setting, exactly like the shell tool.
+//
+// Windows note: the official seam's process inspector is POSIX-only
+// (createProcessInspector throws on win32), so on Windows the PTY is
+// allocated directly through node-pty. Session readiness here is
+// output-quiet based (waitSettled), which needs no process inspection.
+
+import { randomUUID } from "node:crypto";
+import { isAbsolute, resolve } from "node:path";
+import { PassThrough } from "node:stream";
+import { TOOL_ABORTED, defineTool, HarnessError } from "./dsh.js";
+import type {
+  BashTerminalContext,
+  JobsRegistry,
+  ResolvedPaths,
+  TerminalHandle,
+  TerminalSpawnSpec,
+  ToolRunContext
+} from "./dsh-types.js";
+
+const MAX_BUFFER_BYTES = 1024 * 1024;
+const DEFAULT_ROWS = 30;
+const DEFAULT_COLS = 110;
+const DEFAULT_IDLE_MS = 10 * 60 * 1000;
+const MAX_SESSIONS = 8;
+const TERMINAL_SIGNALS = ["SIGINT", "SIGTERM", "SIGKILL", "SIGTSTP", "SIGHUP"] as const;
+
+export type TerminalSignal = (typeof TERMINAL_SIGNALS)[number];
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+interface TerminalBufferRead {
+  delta: string;
+  nextOffset: number;
+  truncated: boolean;
+}
+
+interface TerminalBuffer {
+  append(chunk: string): void;
+  readFrom(offset: number): TerminalBufferRead;
+  snapshot(): string;
+  wasTruncated(): boolean;
+  lastAppendAt(): number;
+}
+
+/**
+ * Wait until the terminal output goes quiet (no new bytes for quietMs) or the
+ * cap elapses. Reads after interactive input then return the complete reply
+ * instead of a fixed-delay slice.
+ */
+async function waitSettled(buffer: TerminalBuffer, quietMs = 300, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  let last = buffer.lastAppendAt();
+  while (Date.now() - start < timeoutMs) {
+    await delay(80);
+    const now = buffer.lastAppendAt();
+    if (now > last) {
+      last = now;
+      continue;
+    }
+    if (Date.now() - last >= quietMs) return;
+  }
+}
+
+/** Interactive-shell argv (no -c: the terminal itself is the session). */
+export function terminalArgv(
+  shell: string,
+  paths: ResolvedPaths,
+  distro?: string
+): Array<string | undefined> {
+  switch (shell) {
+    case "powershell": return [paths.pwsh, "-NoLogo", "-NoProfile"];
+    case "gitbash": return [paths.gitbash, "-i"];
+    case "wsl": {
+      // Verified under ConPTY: 'wsl -e bash -i' on the DEFAULT distro fails with
+      // a WSL service RPC error (0x8007072c), while 'wsl -- bash -i' works;
+      // with an explicit -d distro, '-e bash -i' also works.
+      if (distro !== undefined && distro.trim().length > 0) {
+        return [paths.wsl, "-d", distro.trim(), "-e", "bash", "-i"];
+      }
+      return [paths.wsl, "--", "bash", "-i"];
+    }
+    default: throw new Error("invalid shell: " + JSON.stringify(shell));
+  }
+}
+
+/** In-memory output ring for one session (drop-oldest at the cap). */
+function createBuffer(): TerminalBuffer {
+  let text = "";
+  let truncated = false;
+  let lastAppendAt = Date.now();
+  return {
+    append(chunk: string) {
+      text += chunk;
+      lastAppendAt = Date.now();
+      if (text.length > MAX_BUFFER_BYTES) {
+        text = text.slice(text.length - MAX_BUFFER_BYTES);
+        truncated = true;
+      }
+    },
+    readFrom(offset: number): TerminalBufferRead {
+      const delta = offset >= text.length ? "" : text.slice(offset);
+      return { delta, nextOffset: text.length, truncated };
+    },
+    snapshot: () => text,
+    wasTruncated: () => truncated,
+    lastAppendAt: () => lastAppendAt
+  };
+}
+
+/** Minimal node-pty face used by the direct-win32 path (shape-cast at import). */
+interface NodePtyTerm {
+  pid: number;
+  write(data: string): void;
+  kill(signal?: string): void;
+  onData(callback: (chunk: string) => void): void;
+  onExit(callback: (event: { exitCode: number; signal: unknown }) => void): void;
+}
+
+type NodePtySpawn = (
+  file: string,
+  args: readonly string[],
+  options: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string | undefined> }
+) => NodePtyTerm;
+
+/**
+ * Direct node-pty handle with the same surface the official seam returns:
+ * output (stream), pid, done, write / signalForeground / terminate. Used on
+ * win32 where the official spawnTerminal's process inspector is unsupported.
+ */
+async function spawnPtyHandle(spec: TerminalSpawnSpec): Promise<TerminalHandle> {
+  const { argv, cwd, env, rows, cols } = spec;
+  const mod = (await import("node-pty")) as unknown as { default?: { spawn: NodePtySpawn }; spawn: NodePtySpawn };
+  const nodePty = mod.default ?? mod;
+  const term = nodePty.spawn(argv[0]!, argv.slice(1), {
+    name: "dumb",
+    cols,
+    rows,
+    cwd,
+    env: { ...env, TERM: "dumb", NO_COLOR: "1" }
+  });
+  const output = new PassThrough();
+  term.onData((chunk) => output.write(Buffer.from(chunk, "utf8")));
+  const done = new Promise<{ exitCode: number; signal: string | null }>((resolveDone) => {
+    term.onExit(({ exitCode, signal }) => resolveDone({ exitCode, signal: typeof signal === "string" ? signal : null }));
+  });
+  return {
+    pid: term.pid,
+    output,
+    done,
+    write: (data) => term.write(data),
+    // node-pty accepts no named signals on Windows: Ctrl+C is the \x03 byte
+    // (ConPTY delivers it to the foreground process), other signals degrade
+    // to terminating the session.
+    signalForeground: (sig) => {
+      if (sig === "SIGINT") { term.write("\x03"); return; }
+      term.kill();
+    },
+    terminate: async () => { try { term.kill(); } catch { /* already dead */ } }
+  };
+}
+
+export interface TerminalSessionInfo {
+  sessionId: string;
+  shell: string;
+  pid: number;
+  closed: boolean;
+}
+
+interface TerminalSession {
+  id: string;
+  handle: TerminalHandle;
+  buffer: TerminalBuffer;
+  shell: string;
+  distro?: string;
+  closed: boolean;
+  idleMs: number;
+  idleTimer?: NodeJS.Timeout;
+  touch: () => void;
+}
+
+export interface TerminalOpenOptions {
+  argv: string[];
+  shell: string;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  rows: number;
+  cols: number;
+  distro?: string;
+  initial?: string;
+  idleMs?: number;
+}
+
+export interface TerminalRegistry {
+  open(options: TerminalOpenOptions): Promise<TerminalSession>;
+  get(id: string): TerminalSession;
+  send(id: string, input: string): Promise<TerminalBufferRead>;
+  read(id: string): TerminalBufferRead;
+  signal(id: string, sig: string): Promise<TerminalBufferRead>;
+  close(id: string): Promise<boolean>;
+  list(): TerminalSessionInfo[];
+}
+
+/**
+ * Terminal-session registry owned by the plugin fiber: opens PTYs through
+ * the official seam, forwards output into a capped buffer, and tears every
+ * session down on plugin disposal.
+ */
+export function createTerminalRegistry(ctx: BashTerminalContext): TerminalRegistry {
+  const sessions = new Map<string, TerminalSession>();
+  ctx.effect(() => () => {
+    for (const session of sessions.values()) {
+      void session.handle.terminate().catch(() => { /* already dead */ });
+    }
+    sessions.clear();
+  }, "bash-terminal: terminal sessions teardown");
+
+  async function open(options: TerminalOpenOptions): Promise<TerminalSession> {
+    const { argv, shell, cwd, env, rows, cols, distro, initial, idleMs } = options;
+    if (sessions.size >= MAX_SESSIONS) {
+      throw new Error("terminal: too many open sessions (" + MAX_SESSIONS + "); close one before opening another");
+    }
+    let handle: TerminalHandle;
+    if (process.platform === "win32") {
+      handle = await spawnPtyHandle({ argv, cwd, env, rows, cols });
+    } else {
+      const spawnTerminal = ctx.subprocess?.spawnTerminal;
+      if (spawnTerminal === undefined) {
+        throw new Error("terminal: ctx.subprocess.spawnTerminal seam unavailable");
+      }
+      handle = await spawnTerminal({ argv, cwd, env, rows, cols, graceMs: 3000 });
+    }
+    const buffer = createBuffer();
+    handle.output.on("data", (chunk: unknown) => buffer.append(typeof chunk === "string" ? chunk : String(chunk)));
+    const session: TerminalSession = {
+      id: randomUUID(),
+      handle,
+      buffer,
+      shell,
+      distro,
+      closed: false,
+      idleMs: idleMs ?? DEFAULT_IDLE_MS,
+      touch: () => { /* replaced below */ }
+    };
+    // Idle guard: any read/send/signal touches the timer; expiry terminates the
+    // session so an abandoned PTY never leaks a process tree.
+    const touch = (): void => {
+      if (session.closed) return;
+      clearTimeout(session.idleTimer);
+      session.idleTimer = setTimeout(() => {
+        if (session.closed) return;
+        session.closed = true;
+        sessions.delete(session.id);
+        void session.handle.terminate().catch(() => { /* already dead */ });
+      }, session.idleMs);
+    };
+    session.touch = touch;
+    touch();
+    sessions.set(session.id, session);
+    if (initial !== undefined && initial.length > 0) {
+      await handle.write(initial);
+      await waitSettled(buffer);
+    }
+    return session;
+  }
+
+  function get(id: string): TerminalSession {
+    const session = sessions.get(id);
+    if (session === undefined) throw new Error("terminal session not found: " + JSON.stringify(id));
+    if (session.closed) throw new Error("terminal session is closed: " + JSON.stringify(id));
+    session.touch();
+    return session;
+  }
+
+  async function send(id: string, input: string): Promise<TerminalBufferRead> {
+    const session = get(id);
+    await session.handle.write(input);
+    await waitSettled(session.buffer);
+    return read(id);
+  }
+
+  async function signal(id: string, sig: string): Promise<TerminalBufferRead> {
+    const session = get(id);
+    if (!(TERMINAL_SIGNALS as readonly string[]).includes(sig)) {
+      throw new Error("invalid terminal signal: " + JSON.stringify(sig));
+    }
+    await session.handle.signalForeground(sig);
+    await waitSettled(session.buffer);
+    return read(id);
+  }
+
+  function read(id: string): TerminalBufferRead {
+    const session = get(id);
+    const { delta, nextOffset, truncated } = session.buffer.readFrom(0);
+    return { delta, nextOffset, truncated };
+  }
+
+  async function close(id: string): Promise<boolean> {
+    const session = get(id);
+    session.closed = true;
+    clearTimeout(session.idleTimer);
+    sessions.delete(id);
+    await session.handle.terminate();
+    return true;
+  }
+
+  function list(): TerminalSessionInfo[] {
+    return [...sessions.values()].map((session) => ({
+      sessionId: session.id,
+      shell: session.shell,
+      pid: session.handle.pid,
+      closed: session.closed
+    }));
+  }
+
+  return { open, get, send, read, signal, close, list };
+}
+
+/** The terminal tool's arguments after runtime validation (discriminated by action). */
+export type ValidatedTerminalArgs =
+  | { action: "open"; sessionId?: string; command?: string; distro?: string; workdir?: string; idleMs?: number }
+  | { action: "send"; sessionId: string; input: string }
+  | { action: "read"; sessionId: string }
+  | { action: "signal"; sessionId: string; signal: TerminalSignal }
+  | { action: "close"; sessionId: string }
+  | { action: "list" };
+
+export function validateArgs(args: Record<string, unknown>): asserts args is ValidatedTerminalArgs {
+  const action = args.action;
+  if (typeof action !== "string" || ["open", "send", "read", "signal", "close", "list"].indexOf(action) === -1) {
+    throw new Error("invalid action: expected open, send, read, signal, close, or list");
+  }
+  if ((action === "send" || action === "read" || action === "signal" || action === "close") && (typeof args.sessionId !== "string" || args.sessionId.length === 0)) {
+    throw new Error("invalid sessionId: required for " + action);
+  }
+  if (action === "send" && (typeof args.input !== "string" || args.input.length === 0)) {
+    throw new Error("invalid input: expected a non-empty string for send");
+  }
+  if (action === "signal" && (typeof args.signal !== "string" || (TERMINAL_SIGNALS as readonly string[]).indexOf(args.signal) === -1)) {
+    throw new Error("invalid signal: expected one of " + TERMINAL_SIGNALS.join(", "));
+  }
+}
+
+export interface TerminalOpenResult {
+  kind: "open";
+  sessionId: string;
+  jobId?: string;
+  pid: number;
+  shell: string;
+  output: string;
+}
+
+export interface TerminalSessionResult {
+  kind: "session";
+  output: string;
+  truncated?: boolean;
+}
+
+export interface TerminalClosedResult {
+  kind: "closed";
+  sessionId: string;
+}
+
+export interface TerminalListResult {
+  kind: "list";
+  sessions: TerminalSessionInfo[];
+}
+
+export type TerminalToolResult = TerminalOpenResult | TerminalSessionResult | TerminalClosedResult | TerminalListResult;
+
+export function terminalTool(
+  ctx: BashTerminalContext,
+  registry: TerminalRegistry,
+  paths: ResolvedPaths,
+  defaultShell: () => string
+) {
+  return defineTool<TerminalToolResult>({
+    name: "terminal",
+    description: "Interactive terminal session over the user's default terminal (Settings -> General -> Default terminal: powershell / gitbash / wsl). A real PTY hosts a persistent shell: open a session, send input and read output across turns, deliver signals (Ctrl+C = SIGINT) to the foreground process, and close when done. Backend and env follow the shell tool exactly; the session survives between calls until closed and is managed as a background job (job_kill / job_output work on it); idle sessions close automatically. Use this for interactive programs (REPLs, ssh, databases, TUI tools) or when you need shell state (cwd, variables, aliases) to persist across calls.",
+    parameters: {
+      action: {
+        type: "string",
+        enum: ["open", "send", "read", "signal", "close", "list"],
+        required: true,
+        description: "open: create a session and return its id. send: write input and read new output. read: read new output without writing. signal: send a signal to the foreground process (SIGINT for Ctrl+C). close: terminate the session. list: list live sessions."
+      },
+      sessionId: {
+        type: "string",
+        description: "Session id returned by open; required for send/read/signal/close."
+      },
+      command: {
+        type: "string",
+        description: "With action open: optional command to run immediately in the fresh shell (Enter appended). Default starts an interactive shell."
+      },
+      distro: {
+        type: "string",
+        description: "WSL distribution (only when the configured default terminal is wsl)."
+      },
+      input: {
+        type: "string",
+        description: "With action send: the input to write (no implicit newline; append \\n or \\r for Enter)."
+      },
+      signal: {
+        type: "string",
+        enum: TERMINAL_SIGNALS,
+        description: "With action signal: signal to the foreground process group (SIGINT = Ctrl+C, SIGKILL, SIGTERM, SIGTSTP, SIGHUP)."
+      },
+      workdir: {
+        type: "string",
+        description: "Working directory for the session (open only). Defaults to the session workspace."
+      },
+      idleMs: {
+        type: "number",
+        description: "Idle timeout in ms (open only): the session closes automatically after this long without send/read/signal. Default 600000 (10 min)."
+      }
+    },
+    output: {
+      schema: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "open" },
+              sessionId: { type: "string", required: true },
+              jobId: { type: "string" },
+              pid: { type: "integer", required: true },
+              shell: { type: "string", required: true },
+              output: { type: "string" }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "session" },
+              output: { type: "string", required: true },
+              truncated: { type: "boolean" }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "closed" },
+              sessionId: { type: "string", required: true }
+            }
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              kind: { type: "string", required: true, const: "list" },
+              sessions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    sessionId: { type: "string", required: true },
+                    shell: { type: "string", required: true },
+                    pid: { type: "integer", required: true },
+                    closed: { type: "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: value.kind === "open"
+          ? "terminal session " + value.sessionId + " (pid " + value.pid + ", " + value.shell + ")" + (value.output ? "\n" + value.output : "")
+          : value.kind === "closed"
+            ? "terminal session " + value.sessionId + " closed"
+            : value.kind === "list"
+              ? (value.sessions.length === 0 ? "no open terminal sessions" : value.sessions.map((s) => s.sessionId + " (" + s.shell + ", pid " + s.pid + ")").join("\n"))
+              : value.truncated === true
+                ? (value.output.length === 0 ? "[terminal buffer overflowed; oldest output dropped]" : value.output + "\n[terminal buffer overflowed; oldest output dropped]")
+                : value.output
+      }]
+    },
+    async execute(args, exec): Promise<TerminalToolResult> {
+      validateArgs(args);
+      if (exec.signal.aborted) {
+        const error = new HarnessError("tool call aborted", TOOL_ABORTED);
+        error.name = "AbortError";
+        throw error;
+      }
+      const headerCwd = exec.agent?.session.header.cwd;
+      switch (args.action) {
+        case "open": {
+          const shell = defaultShell();
+          const argv0 = terminalArgv(shell, paths, args.distro);
+          if (argv0[0] === undefined) throw new Error("terminal: " + shell + " backend unavailable - executable not found");
+          // Only element 0 (the resolved executable) can be undefined; guarded above.
+          const argv = argv0 as string[];
+          const cwd = args.workdir !== undefined ? (headerCwd !== undefined && !isAbsolute(args.workdir) ? resolve(headerCwd, args.workdir) : args.workdir) : (headerCwd ?? process.cwd());
+          const dshEnv = ctx.shellEnv.collect(exec);
+          const env: Record<string, string | undefined> = { NO_COLOR: "1", TERM: "dumb", PAGER: "cat", GIT_PAGER: "cat", ...dshEnv };
+          if (shell === "wsl" && dshEnv !== undefined) {
+            const keys = Object.keys(dshEnv);
+            if (keys.length > 0) env.WSLENV = [env.WSLENV, keys.join(":")].filter(Boolean).join(":");
+          }
+          const session = await registry.open({ argv, shell, cwd, env, rows: DEFAULT_ROWS, cols: DEFAULT_COLS, distro: args.distro, initial: args.command !== undefined ? args.command + "\r" : undefined, idleMs: args.idleMs });
+          const jobs = ctx.get("jobs") as JobsRegistry | undefined;
+          const jobId = jobs === undefined ? undefined : jobs.start({
+            kind: "terminal/session",
+            label: "terminal " + session.id.slice(0, 8) + " (" + shell + ")",
+            ...(exec.agent ? { owner: exec.agent } : {}),
+            run: () => ({
+              cancel: () => { void session.handle.terminate().catch(() => { /* already dead */ }); },
+              done: session.handle.done,
+              readOutput: () => registry.read(session.id).delta
+            })
+          });
+          return { kind: "open", sessionId: session.id, ...(jobId !== undefined ? { jobId } : {}), pid: session.handle.pid, shell, output: session.buffer.snapshot() };
+        }
+        case "send": {
+          const { delta, truncated } = await registry.send(args.sessionId, args.input);
+          return { kind: "session", output: delta, ...(truncated ? { truncated } : {}) };
+        }
+        case "read": {
+          const { delta, truncated } = registry.read(args.sessionId);
+          return { kind: "session", output: delta, ...(truncated ? { truncated } : {}) };
+        }
+        case "signal": {
+          const { delta, truncated } = await registry.signal(args.sessionId, args.signal);
+          return { kind: "session", output: delta, ...(truncated ? { truncated } : {}) };
+        }
+        case "close": {
+          await registry.close(args.sessionId);
+          return { kind: "closed", sessionId: args.sessionId };
+        }
+        case "list": {
+          return { kind: "list", sessions: registry.list() };
+        }
+      }
+    },
+    presentCall: (args) => ({
+      card: "terminal",
+      title: "terminal " + String(args.action) + (args.sessionId !== undefined ? " " + String(args.sessionId) : ""),
+      ...(args.input !== undefined ? { description: args.input } : {})
+    })
+  });
+}
