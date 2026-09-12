@@ -72,11 +72,12 @@ node "$env:APPDATA\nvm\v24.16.0\node_modules\@deepseek-ai\dsh\lib\bin.js" --prof
 
 ## 使用
 
-**用户在 Web UI 设置默认终端**：打开设置（齿轮）→ 通用 →「默认终端」下拉，选择 PowerShell / Git Bash / WSL 之一。改动即时生效并持久化。
+**用户在 Web UI 设置默认终端**：打开设置（齿轮）→ 通用 →「默认终端」下拉，选择 PowerShell / Git Bash / MSYS2 / WSL 之一。改动即时生效并持久化。
 
 模型看到 `shell` 工具后，执行命令时自动使用你选择的终端（工具不暴露终端参数，模型无法更改你的选择）：
 
 - 默认终端 = Git Bash 时：`shell(command: "git status")` 走 Git Bash
+- 默认终端 = MSYS2 时：`shell(command: "gcc --version")` 走 MSYS2（`C:\msys64\msys2.exe -c <command>`，POSIX 语法，PATH 含 `/usr/bin` 与 `/mingw64/bin`，自带完整 GCC/mingw64 工具链）
 - 默认终端 = WSL 时：`shell(command: "ls -la /mnt/d/WorkSpace")` 走 WSL；传 `distro: "Ubuntu"` 可指定发行版
 - 默认终端 = PowerShell 时：`shell(command: "Get-Process node")` 走 PowerShell
 
@@ -93,6 +94,7 @@ node "$env:APPDATA\nvm\v24.16.0\node_modules\@deepseek-ai\dsh\lib\bin.js" --prof
 | `maxTimeoutMs` | 600000 | 调用方 timeoutMs 上限 |
 | `pwshPath` | 自动探测 | 固定 pwsh.exe 路径 |
 | `gitBashPath` | 自动探测 | 固定 git bash.exe 路径 |
+| `msys2Path` | 自动探测 | 固定 msys2.exe 路径（默认 `C:\msys64\msys2.exe`） |
 | `wslPath` | 自动探测 | 固定 wsl.exe 路径 |
 
 ## 卸载

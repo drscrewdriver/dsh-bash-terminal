@@ -110,6 +110,26 @@ assert.strictEqual(localeRegisters[0].ns, "settings.bash-terminal");
 assert.ok(localeRegisters[0].dicts.zh["shell.title"]);
 assert.ok(localeRegisters[0].dicts.en["shell.title"]);
 
+// Drift guard: the Web UI must offer exactly the shells the host supports.
+// src/client.tsx cannot import the host module (node: builtins), so the contract
+// is asserted here against the shipped bundle instead.
+const hostShells = ["powershell", "gitbash", "msys2", "wsl"];
+const enDict = localeRegisters[0].dicts.en!;
+const zhDict = localeRegisters[0].dicts.zh!;
+for (const id of hostShells) {
+  assert.ok(enDict[`shell.${id}`], `en dictionary missing shell.${id}`);
+  assert.ok(zhDict[`shell.${id}`], `zh dictionary missing shell.${id}`);
+  assert.ok(
+    new RegExp(`value:\\s*"${id}"`).test(bundle),
+    `client bundle renders no <option> for shell "${id}"`
+  );
+}
+assert.strictEqual(
+  Object.keys(enDict).filter((k) => k.startsWith("shell.")).length,
+  hostShells.length + 2,
+  "en dictionary has an unexpected number of shell.* keys"
+);
+
 // settings row registered into the General item slot
 assert.strictEqual(slotRegistrations.length, 1);
 assert.strictEqual(slotRegistrations[0].slot, "settings.general.item");

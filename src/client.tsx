@@ -1,6 +1,11 @@
 // dsh-bash-terminal client plugin: a "Default terminal" preference row in the
-// Web UI General settings. The user picks powershell / gitbash / wsl; the host
-// shell tool obeys that choice (the model cannot change it).
+// Web UI General settings. The user picks powershell / gitbash / msys2 / wsl;
+// the host shell tool obeys that choice (the model cannot change it).
+//
+// The option list below must stay in lockstep with SHELLS in ./index.ts: every
+// id gets an <option> here and a `shell.<id>` entry in both dictionaries. The
+// shipped bundle cannot import the host module (it pulls node: builtins), so
+// test/client.ts asserts the bundle covers every host shell id instead.
 
 import { defineStore } from "@deepseek-ai/dsh-client-store";
 
@@ -12,6 +17,7 @@ const zh: Record<string, string> = {
   "shell.description": "shell 工具执行命令时使用的终端（由你决定，AI 无法更改）",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 const en: Record<string, string> = {
@@ -19,6 +25,7 @@ const en: Record<string, string> = {
   "shell.description": "Terminal used by the shell tool (you control this; the AI cannot change it)",
   "shell.powershell": "PowerShell",
   "shell.gitbash": "Git Bash",
+  "shell.msys2": "MSYS2",
   "shell.wsl": "WSL"
 };
 
@@ -74,6 +81,7 @@ function ShellPreferenceRow({ t, useStore, setShell }: ShellPreferenceRowProps) 
       >
         <option value="powershell">{t("shell.powershell")}</option>
         <option value="gitbash">{t("shell.gitbash")}</option>
+        <option value="msys2">{t("shell.msys2")}</option>
         <option value="wsl">{t("shell.wsl")}</option>
       </select>
     </div>
