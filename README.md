@@ -128,8 +128,9 @@ Remove-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-bash-terminal" 
 
 ```powershell
 cd D:\WorkSpace\projects\dsh-bash-terminal
-node test\unit.mjs    # 纯函数单测（路径解析/argv/env/渲染/校验）
-node test\apply.mjs   # apply + execute mock 集成测试（用户设置决定后端、workdir、WSLENV、超时）
-node test\client.mjs  # client 插件逻辑测试（slot 注册/初始快照/setShell 写透）
-node scripts/build-client.mjs  # 打包前端设置项 bundle → dist/client.js
+npm install          # 安装依赖（含 typescript）
+npm run build        # tsc 编译 src/*.ts → lib/*.js；client.tsx → dist/client.js；test/*.ts → test-dist/
+npm test             # node test-dist/unit.js → apply.js → client.js
 ```
+
+源码为 TypeScript（`strict` + `noUncheckedIndexedAccess`），编译产物 `lib/`、`dist/` 随仓库提交，DSH 直接按 `lib/index.js` 加载，无需安装即可使用。
