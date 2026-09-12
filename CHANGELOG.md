@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4 (2026-09-12)
+
+- **全量 TypeScript 重写**. 服务端 lib/index.js → src/index.ts；客户端 src/client.jsx → src/client.tsx；测试 test/*.mjs → test/*.ts（编译到 test-dist/ 运行）。tsc strict + noUncheckedIndexedAccess 全绿。
+- DSH 接缝契约收敛为手写结构类型（src/dsh-types.ts），peer 包值导入统一经 src/dsh.ts 桥接窄化。
+- 构建链：npm run build = tsc（服务端 → lib/）+ tsc -p tsconfig.client.json（类型检查，client 侧 peer 模块经 src/client-types.d.ts 环境声明）+ esbuild（src/client.tsx → dist/client.js）+ tsc -p tsconfig.test.json。lib/、dist/ 产物继续随仓库提交。
+- 导出面与运行时行为同 0.2.3 保持一致；`settingsNamespace` 经 0.1.0-rc.6 时代 peer 提供，本机开发环境用 `@deepseek-ai/dsh-settings@0.1.0-rc.6` 运行测试。
+
 ## 0.2.3 (2026-08-14)
 
 - Fail-closed test coverage (unavailable sandbox backend rejects the call).
