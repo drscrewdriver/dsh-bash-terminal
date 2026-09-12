@@ -2,8 +2,20 @@
 // and exercise apply(ctx) with mocked slots/locale/settingsScope services.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import { join } from "node:path";
 import assert from "node:assert";
-const profileRequire = createRequire("C:/Users/10045/.dsh/profiles/web/package.json");
+import { SHELLS as HOST_SHELLS, internals } from "../lib/index.js";
+const { SHELL_DESCRIPTIONS } = internals;
+// react is installed into the project node_modules (npm install react react-dom
+// --no-save); fall back to the profile dependency tree on a dev machine.
+function loadShared(name) {
+  try {
+    return createRequire(import.meta.url)(name);
+  } catch {
+    return createRequire(join(os.homedir(), ".dsh", "profiles", "web", "package.json"))(name);
+  }
+}
 
 // --- mock defineStore (shape mirrors dsh-client-store: { spec, create }) ---
 const mockDefineStore = (decl) => ({
@@ -55,7 +67,7 @@ globalThis.window = {
       assert.strictEqual(id, "dsh-bash-terminal");
       exported = factory((name) => {
         if (name === "@deepseek-ai/dsh-client-store") return { defineStore: mockDefineStore };
-        if (name === "react/jsx-runtime" || name === "react") return profileRequire(name);
+        if (name === "react/jsx-runtime" || name === "react") return loadShared(name);
         throw new Error("unexpected require: " + name);
       });
     }
@@ -74,6 +86,21 @@ assert.strictEqual(localeRegisters.length, 1);
 assert.strictEqual(localeRegisters[0].ns, "settings.bash-terminal");
 assert.ok(localeRegisters[0].dicts.zh["shell.title"]);
 assert.ok(localeRegisters[0].dicts.en["shell.title"]);
+
+// --- host <-> client drift guard ---------------------------------------------
+// The settings row must offer exactly the backends the host supports, in the
+// host catalog order, with a label in both dictionaries. A host backend added
+// without its client entry (the msys2 bug) fails here.
+assert.deepStrictEqual(HOST_SHELLS, ["powershell", "gitbash", "msys2", "wsl"], "host catalog order");
+const dicts = localeRegisters[0].dicts;
+const bundleIds = [...bundle.matchAll(/value: "([a-z0-9]+)"/g)].map((m) => m[1]);
+assert.deepStrictEqual(bundleIds, HOST_SHELLS, "client option order matches the host catalog order");
+for (const id of HOST_SHELLS) {
+  assert.ok(dicts.zh["shell." + id], `zh dictionary labels ${id}`);
+  assert.ok(dicts.en["shell." + id], `en dictionary labels ${id}`);
+  assert.ok(SHELL_DESCRIPTIONS[id], `host describes ${id}`);
+}
+assert.ok(bundle.includes("shell.msys2"), "bundle carries the shell.msys2 key");
 
 // settings row registered into the General item slot
 assert.strictEqual(slotRegistrations.length, 1);

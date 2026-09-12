@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.5 (2026-09-13)
+
+- **修正 MSYS2 后端（分支上 4637975 引入的实现在管道 stdio 下静默空跑）**：原实现把 `C:\msys64\msys2.exe` 作为首选可执行文件并用 `-c` 执行。`msys2.exe` 是分配控制台的 Cygwin 启动器，管道 stdio 下对任何命令都返回 exit 0 且 stdout/stderr 各 0 字节（在 MSYS2 bash 5.3.15 上实测）——看着成功、实际什么都没跑。现在候选顺序是 `C:\msys64\usr\bin\bash.exe` → `C:\msys64\bin\bash.exe` → PATH 派生项，`msys2.exe` 仅作为文档化的最后兜底；`buildArgv("msys2")` 改用 `-lc`（登录 shell 才会 source `/etc/profile`，这才是把 `/usr/bin` 与 `/mingw64/bin` 放进 PATH 的东西；裸 `-c` 下 `tr`/`sed`/`gcc` 全部 command not found）。
+- `buildEnv("msys2", ...)` 注入 `MSYSTEM=MINGW64`（用户显式传值优先），让 `/mingw64/bin`（gcc、make 等）进入 PATH；仅对 msys2 生效。
+- `SHELL_DESCRIPTIONS.msys2` 改为描述 `MSYS2 bash -lc <command>`，不再宣传 `msys2.exe -c`。
+- 客户端「默认终端」设置行补上 MSYS2 选项（此前服务端有、UI 里选不到），中英词典各加 `shell.msys2: "MSYS2"`。
+- 测试：`buildArgv("msys2")` 断言 `-lc`、`buildEnv` 断言 `MSYSTEM=MINGW64` 且显式值优先、候选列表中每个 `bash.exe` 必须排在 `msys2.exe` 之前、解析结果必须落在 `bash.exe`、apply 用例覆盖 msys2 的 argv/env，client 用例新增「宿主 `SHELLS` 与客户端选项顺序 + 双语词典 + 描述」一致性漂移守卫；`test/client.mjs` 不再硬编码作者机器的 profile 路径，改为先在项目 `node_modules` 解析、失败再回退 profile。
+
 ## 0.2.3 (2026-08-14)
 
 - Fail-closed test coverage (unavailable sandbox backend rejects the call).

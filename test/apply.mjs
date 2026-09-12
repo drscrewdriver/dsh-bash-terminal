@@ -71,6 +71,15 @@ spawnCalls.length = 0;
 await registered.execute({ command: "echo hi", description: "test" }, exec);
 assert.deepStrictEqual(spawnCalls[0].argv.slice(0, 2), ["C:\\Program Files\\Git\\bin\\bash.exe", "-lc"]);
 
+// 2b) user setting = msys2 -> real bash.exe with -lc and MSYSTEM=MINGW64
+userDefaultShell = "msys2";
+spawnCalls.length = 0;
+await registered.execute({ command: "echo hi", description: "test" }, exec);
+assert.ok(spawnCalls[0].argv[0].toLowerCase().endsWith("bash.exe"), "msys2 runs the real bash.exe: " + spawnCalls[0].argv[0]);
+assert.ok(!spawnCalls[0].argv[0].toLowerCase().endsWith("msys2.exe"), "msys2.exe launcher is never the resolved backend");
+assert.deepStrictEqual(spawnCalls[0].argv.slice(1), ["-lc", "echo hi"]);
+assert.strictEqual(spawnCalls[0].env.MSYSTEM, "MINGW64", "MSYSTEM=MINGW64 injected for msys2");
+
 // 3) user setting = wsl + distro + workdir
 userDefaultShell = "wsl";
 spawnCalls.length = 0;
