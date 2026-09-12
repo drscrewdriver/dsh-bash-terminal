@@ -1,5 +1,5 @@
 /** The terminal backends this plugin exposes. */
-export type ShellId = "powershell" | "gitbash" | "wsl";
+export type ShellId = "powershell" | "gitbash" | "msys2" | "wsl";
 /** Permissive node of the DSH JSON-schema dialect used in tool output declarations. */
 export interface JsonSchemaNode {
     type?: string;
@@ -173,6 +173,7 @@ export interface JobsRegistry {
 export interface ResolvedPaths {
     pwsh?: string;
     gitbash?: string;
+    msys2?: string;
     wsl?: string;
 }
 export interface CollectSpec {

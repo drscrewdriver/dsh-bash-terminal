@@ -13,6 +13,10 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { TOOL_ABORTED, defineTool, HarnessError } from "./dsh.js";
+// Single source of truth for backend env (msys2 MSYSTEM injection, WSL WSLENV).
+// The cycle with ./index.js is safe: buildEnv is a hoisted function declaration
+// and is only called at tool-execution time, never during module evaluation.
+import { buildEnv } from "./index.js";
 import type {
   BashTerminalContext,
   JobsRegistry,
@@ -77,6 +81,13 @@ export function terminalArgv(
   switch (shell) {
     case "powershell": return [paths.pwsh, "-NoLogo", "-NoProfile"];
     case "gitbash": return [paths.gitbash, "-i"];
+    case "msys2":
+      // -l, NOT -lc: this argv carries no command (the PTY itself is the
+      // session), and `bash -lc` with no operand dies immediately with
+      // "-c: option requires an argument" (measured: exit 2). A login shell is
+      // also what sources /etc/profile, putting /usr/bin and /mingw64/bin on
+      // PATH for the interactive session.
+      return [paths.msys2, "-l"];
     case "wsl": {
       // Verified under ConPTY: 'wsl -e bash -i' on the DEFAULT distro fails with
       // a WSL service RPC error (0x8007072c), while 'wsl -- bash -i' works;
@@ -382,7 +393,7 @@ export function terminalTool(
 ) {
   return defineTool<TerminalToolResult>({
     name: "terminal",
-    description: "Interactive terminal session over the user's default terminal (Settings -> General -> Default terminal: powershell / gitbash / wsl). A real PTY hosts a persistent shell: open a session, send input and read output across turns, deliver signals (Ctrl+C = SIGINT) to the foreground process, and close when done. Backend and env follow the shell tool exactly; the session survives between calls until closed and is managed as a background job (job_kill / job_output work on it); idle sessions close automatically. Use this for interactive programs (REPLs, ssh, databases, TUI tools) or when you need shell state (cwd, variables, aliases) to persist across calls.",
+    description: "Interactive terminal session over the user's default terminal (Settings -> General -> Default terminal: powershell / gitbash / msys2 / wsl). A real PTY hosts a persistent shell: open a session, send input and read output across turns, deliver signals (Ctrl+C = SIGINT) to the foreground process, and close when done. Backend and env follow the shell tool exactly; the session survives between calls until closed and is managed as a background job (job_kill / job_output work on it); idle sessions close automatically. Use this for interactive programs (REPLs, ssh, databases, TUI tools) or when you need shell state (cwd, variables, aliases) to persist across calls.",
     parameters: {
       action: {
         type: "string",
@@ -503,12 +514,16 @@ export function terminalTool(
           // Only element 0 (the resolved executable) can be undefined; guarded above.
           const argv = argv0 as string[];
           const cwd = args.workdir !== undefined ? (headerCwd !== undefined && !isAbsolute(args.workdir) ? resolve(headerCwd, args.workdir) : args.workdir) : (headerCwd ?? process.cwd());
-          const dshEnv = ctx.shellEnv.collect(exec);
-          const env: Record<string, string | undefined> = { NO_COLOR: "1", TERM: "dumb", PAGER: "cat", GIT_PAGER: "cat", ...dshEnv };
-          if (shell === "wsl" && dshEnv !== undefined) {
-            const keys = Object.keys(dshEnv);
-            if (keys.length > 0) env.WSLENV = [env.WSLENV, keys.join(":")].filter(Boolean).join(":");
-          }
+          // buildEnv, not an inline duplicate: the msys2 backend needs its
+          // MSYSTEM=MINGW64 injection here too, or the login shell sources
+          // /etc/profile with the default MSYS environment and /mingw64/bin
+          // (gcc, make) never joins PATH. It also owns the WSL WSLENV layering,
+          // so a terminal session's env follows the shell tool exactly.
+          // process.env.WSLENV is passed explicitly: spawnTerminal replaces the
+          // child environment wholesale (childEnv(spec.env)), so the ambient
+          // allow-list is not otherwise visible and inherited entries such as
+          // WT_SESSION / WT_PROFILE_ID would be dropped.
+          const env = buildEnv(shell, ctx.shellEnv.collect(exec), process.env.WSLENV);
           const session = await registry.open({ argv, shell, cwd, env, rows: DEFAULT_ROWS, cols: DEFAULT_COLS, distro: args.distro, initial: args.command !== undefined ? args.command + "\r" : undefined, idleMs: args.idleMs });
           const jobs = ctx.get("jobs") as JobsRegistry | undefined;
           const jobId = jobs === undefined ? undefined : jobs.start({

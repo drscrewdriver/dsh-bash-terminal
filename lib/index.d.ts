@@ -4,7 +4,7 @@ export declare const name = "bash-terminal";
 /** Services required before the tool can register. */
 export declare const inject: string[];
 /** The terminal backends this tool exposes, in catalog order. */
-export declare const SHELLS: readonly ["powershell", "gitbash", "wsl"];
+export declare const SHELLS: readonly ["powershell", "gitbash", "msys2", "wsl"];
 /** The backend used when the caller does not name one. */
 export declare const DEFAULT_SHELL: ShellId;
 /** Settings namespace backing the user-chosen default terminal. */
@@ -16,6 +16,7 @@ export interface ConfigValues {
     maxTimeoutMs: number;
     pwshPath: string;
     gitBashPath: string;
+    msys2Path: string;
     wslPath: string;
 }
 /** Runtime configuration schema. */
@@ -29,18 +30,41 @@ export declare function candidatePwshPaths(env?: NodeJS.ProcessEnv): string[];
  * forwarder, not a Git Bash shell).
  */
 export declare function candidateGitBashPaths(env?: NodeJS.ProcessEnv): string[];
+/**
+ * MSYS2 locations, in preference order: the real `bash.exe` under usr\bin
+ * first, then bin\bash.exe, and `msys2.exe` dead last.
+ *
+ * msys2.exe is NOT a usable backend for piped execution: it is the console-
+ * allocating Cygwin launcher, so a spawn with piped stdio returns exit 0 with
+ * zero bytes on both stdout and stderr (measured on this machine against
+ * MSYS2 with bash 5.3.15). Keeping it in the list only as a last-resort
+ * fallback preserves the path the config docs reference, but a working
+ * bash.exe always wins.
+ *
+ * MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash, so it cannot run
+ * under the DSH Windows ACL restricted-token sandbox.
+ */
+export declare function candidateMsys2Paths(env?: NodeJS.ProcessEnv): string[];
 export declare function defaultWslPath(env?: NodeJS.ProcessEnv): string;
 /** Executable paths, possibly undefined when a backend is not installed. */
 export type { ResolvedPaths };
-type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "wslPath">>;
+type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "msys2Path" | "wslPath">>;
 export declare function resolveAllPaths(config?: PathConfig, env?: NodeJS.ProcessEnv): ResolvedPaths;
 export declare function buildArgv(shell: string, command: string, paths: ResolvedPaths, distro?: string): Array<string | undefined>;
 /**
  * Merge the DSH_* environment over the process environment. For WSL, only
  * variables explicitly listed in WSLENV cross the boundary, so every DSH_*
- * key is appended there (WSLENV is a : separated VAR[/flag] list).
+ * key is appended there — and the list is *layered onto* whatever WSLENV the
+ * host already had (Windows Terminal exports e.g. `WT_SESSION:WT_PROFILE_ID:`),
+ * never rebuilt from scratch: WSLENV is an allow-list, so dropping the
+ * inherited entries would silently stop them crossing into WSL.
+ *
+ * @param inheritedWslenv - the ambient WSLENV to layer onto. Callers that
+ *   replace the child environment wholesale (the PTY path) must pass
+ *   `process.env.WSLENV` explicitly, because the ambient value is not visible
+ *   through `dshEnv`.
  */
-export declare function buildEnv(shell: string, dshEnv?: Record<string, string>): Record<string, string | undefined>;
+export declare function buildEnv(shell: string, dshEnv?: Record<string, string>, inheritedWslenv?: string | undefined): Record<string, string | undefined>;
 export interface SpawnResolution {
     command: string;
     workdir: string;

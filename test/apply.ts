@@ -1,4 +1,4 @@
-import { apply } from "../lib/index.js";
+import { apply, internals } from "../lib/index.js";
 import type { ForegroundResult, BackgroundResult } from "../lib/index.js";
 import type {
   BashTerminalContext,
@@ -91,6 +91,10 @@ const wslPath = (process.env.SystemRoot ?? "C:\\Windows").replace(/\\$/, "") + "
 assert.deepStrictEqual(spawnCalls[0].argv, [wslPath, "-d", "Ubuntu", "-e", "bash", "-lc", "pwd"]);
 assert.strictEqual(spawnCalls[0].cwd, "D:\\WorkSpace\\projects");
 assert.ok(spawnCalls[0].env!.WSLENV!.includes("DSH_WEB_URL"), "WSLENV should carry DSH vars");
+// The layered allow-list must stay well-formed whatever the host had set.
+assert.ok(!spawnCalls[0].env!.WSLENV!.includes("::"), "layered WSLENV has no empty entry: " + spawnCalls[0].env!.WSLENV);
+assert.ok(!spawnCalls[0].env!.WSLENV!.endsWith(":"), "layered WSLENV has no trailing separator: " + spawnCalls[0].env!.WSLENV);
+assert.ok(!spawnCalls[0].env!.WSLENV!.split(":").includes("WSLENV"), "WSLENV key is not appended to itself: " + spawnCalls[0].env!.WSLENV);
 
 // 4) timeout clamp: timeoutMs beyond max is capped
 userDefaultShell = "powershell";
@@ -131,22 +135,48 @@ const gitConfined = await reg.execute({ command: "echo hi", description: "t" }, 
 assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "gitbash not confined under read-only");
 assert.strictEqual(gitConfined.sandbox!.enforcement, "gitbash-unconfined");
 
-// 9) sandbox escalation: sandbox_permissions + justification widens policy
+// 9) user setting = msys2 -> bash.exe -lc argv + MSYSTEM=MINGW64 env, and the
+// msys2-unconfined enforcement. Guarded: the backend must be installed (the
+// tool throws "backend unavailable" otherwise).
+const msys2Path = (internals.resolveAllPaths({}, process.env) as { msys2?: string }).msys2;
+if (msys2Path !== undefined) {
+  assert.ok(
+    !msys2Path.toLowerCase().endsWith("msys2.exe"),
+    "msys2 resolves to bash.exe, not the msys2.exe launcher: " + msys2Path
+  );
+  sandboxMode = "danger-full-access";
+  userDefaultShell = "msys2";
+  spawnCalls.length = 0;
+  await reg.execute({ command: "echo hi", description: "t" }, exec);
+  assert.deepStrictEqual(spawnCalls[0].argv, [msys2Path, "-lc", "echo hi"], "msys2 argv uses -lc");
+  assert.strictEqual(spawnCalls[0].env!.MSYSTEM, "MINGW64", "msys2 env carries MSYSTEM=MINGW64");
+
+  sandboxMode = "read-only";
+  spawnCalls.length = 0;
+  const msys2Confined = await reg.execute({ command: "echo hi", description: "t" }, exec) as ForegroundResult;
+  assert.ok(!spawnCalls[0].argv.includes("sandbox-runner"), "msys2 not confined under read-only");
+  assert.strictEqual(msys2Confined.sandbox!.enforcement, "msys2-unconfined");
+} else {
+  console.log("NOTE: msys2 backend not installed; skipping the msys2 execute assertions");
+}
+sandboxMode = "danger-full-access";
+
+// 10) sandbox escalation: sandbox_permissions + justification widens policy
 userDefaultShell = "powershell";
 sandboxMode = "read-only";
 spawnCalls.length = 0;
 const escalated = await reg.execute({ command: "x", description: "t", sandbox_permissions: "danger-full-access", justification: "need full access for the test" }, exec) as ForegroundResult;
 assert.strictEqual(escalated.sandbox, undefined, "danger-full-access approved -> no confine");
 
-// 10) escalation pairing validation
+// 11) escalation pairing validation
 await assert.rejects(() => reg.execute({ command: "x", description: "t", sandbox_permissions: "workspace-write" }, exec), /justification/);
 await assert.rejects(() => reg.execute({ command: "x", description: "t", justification: "why" }, exec), /sandbox_permissions/);
 
-// 11) params advertise escalation modes
+// 12) params advertise escalation modes
 assert.ok(reg.parameters.properties.sandbox_permissions, "sandbox_permissions advertised");
 assert.deepStrictEqual(reg.parameters.properties.sandbox_permissions!.enum, ["workspace-write", "danger-full-access"]);
 
-// 12) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection
+// 13) fail-closed: sandbox backend unavailable -> SandboxUnavailableError-like rejection
 sandboxMode = "read-only";
 userDefaultShell = "powershell";
 const realConfine = ctx.sandbox.confine;
@@ -154,7 +184,7 @@ ctx.sandbox.confine = () => { throw new Error("sandbox mode \"read-only\" is req
 await assert.rejects(() => reg.execute({ command: "x", description: "t" }, exec), /no sandbox backend/);
 ctx.sandbox.confine = realConfine;
 
-// 13) background execution registers a job with working hooks
+// 14) background execution registers a job with working hooks
 userDefaultShell = "powershell";
 sandboxMode = "danger-full-access";
 spawnCalls.length = 0;

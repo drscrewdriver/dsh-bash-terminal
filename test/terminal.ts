@@ -2,11 +2,12 @@
 // registry + tool surface (fake ctx, real PTY backend).
 import { createTerminalRegistry, terminalTool, terminalArgv } from "../lib/terminal.js";
 import type { TerminalToolResult } from "../lib/terminal.js";
+import { internals } from "../lib/index.js";
 import { createRequire } from "node:module";
 import { PassThrough } from "node:stream";
 import os from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import assert from "node:assert";
 
 interface NodePtyLike {
@@ -72,7 +73,7 @@ const ctx = {
 };
 const registry = createTerminalRegistry(ctx as never);
 const pwsh7 = "C:/Program Files/PowerShell/7/pwsh.exe";
-const paths = { pwsh: existsSync(pwsh7) ? pwsh7 : "C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe", gitbash: "C:/Program Files/Git/bin/bash.exe", wsl: "C:/WINDOWS/System32/wsl.exe" };
+const paths = { pwsh: existsSync(pwsh7) ? pwsh7 : "C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe", gitbash: "C:/Program Files/Git/bin/bash.exe", msys2: "C:/msys64/usr/bin/bash.exe", wsl: "C:/WINDOWS/System32/wsl.exe" };
 let defaultShell = "gitbash";
 const tool = terminalTool(ctx as never, registry, paths, () => defaultShell);
 assert.strictEqual(tool.name, "terminal");
@@ -87,7 +88,29 @@ function gitbashPath(p: string): string {
 
 // argv shape
 assert.deepStrictEqual(terminalArgv("gitbash", paths, undefined), ["C:/Program Files/Git/bin/bash.exe", "-i"]);
+// msys2 interactive sessions use -l, NEVER -lc: this argv carries no command,
+// and `bash -lc` with no operand dies with "-c: option requires an argument".
+assert.deepStrictEqual(terminalArgv("msys2", paths, undefined), ["C:/msys64/usr/bin/bash.exe", "-l"]);
 assert.deepStrictEqual(terminalArgv("powershell", paths, undefined), ["C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe", "-NoLogo", "-NoProfile"]);
+
+// Wiring guard: the PTY path must take its env from the shared buildEnv helper
+// (with the inherited WSLENV passed explicitly), not from an inline duplicate —
+// an inline copy silently lost the msys2 MSYSTEM injection, so the interactive
+// msys2 shell got the bare MSYS environment with no /mingw64/bin on PATH.
+const terminalModule = readFileSync(new URL("../lib/terminal.js", import.meta.url), "utf8");
+assert.ok(
+  terminalModule.includes("buildEnv(shell, ctx.shellEnv.collect(exec), process.env.WSLENV)"),
+  "terminal.ts builds its env through buildEnv(..., process.env.WSLENV): " + terminalModule.slice(0, 0)
+);
+assert.ok(!terminalModule.includes('PAGER: "cat", GIT_PAGER: "cat"'), "no inline env duplicate in the PTY path");
+
+// The real resolved msys2 backend must be a bash.exe, never the msys2.exe launcher.
+const realMsys2 = (internals.resolveAllPaths({}, process.env) as { msys2?: string }).msys2;
+if (realMsys2 !== undefined) {
+  assert.ok(realMsys2.toLowerCase().endsWith("bash.exe"), "resolved msys2 backend is a bash.exe: " + realMsys2);
+  assert.ok(!realMsys2.toLowerCase().endsWith("msys2.exe"), "msys2.exe must never win resolution: " + realMsys2);
+  assert.ok(terminalArgv("msys2", { msys2: realMsys2 }, undefined)[0]!.toLowerCase().endsWith("bash.exe"), "interactive argv[0] is a bash.exe");
+}
 assert.deepStrictEqual(terminalArgv("wsl", paths, "Ubuntu"), ["C:/WINDOWS/System32/wsl.exe", "-d", "Ubuntu", "-e", "bash", "-i"]);
 assert.deepStrictEqual(terminalArgv("wsl", paths, undefined), ["C:/WINDOWS/System32/wsl.exe", "--", "bash", "-i"]);
 
@@ -111,6 +134,13 @@ const r2 = await tool.execute({ action: "send", sessionId: opened.sessionId, inp
 assert.ok(r2.output.includes(targetDir), "pwd reflects the cd (session state persisted): " + JSON.stringify(r2.output.slice(-120)));
 const r3 = await tool.execute({ action: "send", sessionId: opened.sessionId, input: "echo SESSION-KEEPS-ALIVE\r" }, exec) as Extract<TerminalToolResult, { kind: "session" }>;
 assert.ok(r3.output.includes("SESSION-KEEPS-ALIVE"), "echo output visible");
+
+// NOTE: a "MSYSTEM does not leak into gitbash" check cannot be made from inside
+// the session — Git for Windows sets MSYSTEM=MINGW64 in its own startup scripts
+// (measured: `bash -i` with a minimal env still prints MSYSTEM=[MINGW64]), so the
+// observation says nothing about this plugin. The leak guard therefore lives at
+// the buildEnv level in test/unit.ts (buildEnv("gitbash"|"powershell").MSYSTEM is
+// undefined, msys2 is the only backend that injects it).
 
 // read without write
 await delay(200);
@@ -186,6 +216,32 @@ if (wslOpened !== undefined) {
     assert.ok(wslOut.output.includes("/mnt/"), "wsl interactive responds with /mnt/ path: " + JSON.stringify(wslOut.output.slice(-150)));
   }
   await tool.execute({ action: "close", sessionId: wslOpened.sessionId }, exec).catch(() => {});
+}
+
+// msys2 backend interactive session. The regression this guards: the PTY path
+// used to build its env inline instead of through buildEnv, so MSYSTEM never
+// reached the login shell — /etc/profile then picked the default MSYS
+// environment and /mingw64/bin (gcc, make) was missing from PATH while the
+// one-shot `shell` tool worked fine. Kept after the wsl block so it cannot
+// shift wsl.exe's (already intermittent) ConPTY startup timing.
+defaultShell = "msys2";
+if (existsSync("C:/msys64/usr/bin/bash.exe")) {
+  const msysOpened = await tool.execute({ action: "open" }, exec) as Extract<TerminalToolResult, { kind: "open" }>;
+  assert.strictEqual(msysOpened.shell, "msys2");
+  await delay(2500); // login shell sources /etc/profile first
+  let msysOut = await tool.execute({ action: "send", sessionId: msysOpened.sessionId, input: "echo MSYSTEM=$MSYSTEM; command -v gcc; echo BASH=$BASH\r" }, exec) as Extract<TerminalToolResult, { kind: "session" }>;
+  for (let i = 0; i < 3 && !msysOut.output.includes("MSYSTEM="); i++) {
+    await delay(1200);
+    msysOut = await tool.execute({ action: "read", sessionId: msysOpened.sessionId }, exec) as Extract<TerminalToolResult, { kind: "session" }>;
+  }
+  console.log("msys2 PTY output:", JSON.stringify(msysOut.output.slice(-200)));
+  assert.ok(msysOut.output.length > 0, "msys2 interactive session produced output (0 bytes = the msys2.exe dead end)");
+  assert.ok(msysOut.output.includes("MSYSTEM=MINGW64"), "interactive msys2 session runs the MINGW64 environment: " + JSON.stringify(msysOut.output.slice(-200)));
+  assert.ok(msysOut.output.includes("/mingw64/bin/gcc"), "interactive msys2 session has /mingw64/bin/gcc on PATH: " + JSON.stringify(msysOut.output.slice(-200)));
+  assert.ok(msysOut.output.includes("BASH=/usr/bin/bash"), "interactive msys2 session runs the real bash.exe: " + JSON.stringify(msysOut.output.slice(-200)));
+  await tool.execute({ action: "close", sessionId: msysOpened.sessionId }, exec).catch(() => {});
+} else {
+  console.log("NOTE: msys2 backend not installed; skipping the interactive msys2 assertion");
 }
 
 // session cap: opening beyond MAX_SESSIONS refuses; list shows them

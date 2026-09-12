@@ -1,11 +1,12 @@
-// dsh-bash-terminal - one shell tool, three Windows terminals.
+// dsh-bash-terminal - one shell tool, four Windows terminals.
 //
 // Registers a model-facing shell tool. The terminal backend (powershell /
-// gitbash / wsl) is chosen by the USER in the Web UI settings (default
+// gitbash / msys2 / wsl) is chosen by the USER in the Web UI settings (default
 // terminal); the model cannot pick it — the tool always obeys the user's
 // choice:
 //   - powershell: pwsh -NoLogo -NoProfile -NonInteractive -Command <cmd>
 //   - gitbash:    Git for Windows bash -lc <cmd>  (POSIX; /d/... paths)
+//   - msys2:      MSYS2 bash -lc <cmd>  (POSIX; /c/... paths, full GCC/mingw64 toolchain)
 //   - wsl:        wsl [-d <distro>] -e bash -lc <cmd>  (Linux; /mnt/d/... paths)
 //
 // The tool spawns through the shared ctx.subprocess seam (process-tree
@@ -16,10 +17,10 @@
 // sandboxed PowerShell executor keeps serving the pwsh tool. This tool is
 // an additional, user-selected terminal that still honors the DSH sandbox:
 // confined modes wrap PowerShell's spawn argv through ctx.sandbox
-// (fail-closed), while danger-full-access, Git Bash, and WSL run unconfined.
-// Git Bash is unconfined because the DSH Windows ACL restricted-token runner
-// cannot host Cygwin/MSYS2: bash aborts with "CreateFileMapping ... Win32
-// error 5" during startup.
+// (fail-closed), while danger-full-access, Git Bash, MSYS2, and WSL run
+// unconfined. Git Bash and MSYS2 are unconfined because the DSH Windows ACL
+// restricted-token runner cannot host Cygwin/MSYS2: bash aborts with
+// "CreateFileMapping ... Win32 error 5" during startup.
 
 import { lstatSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -57,7 +58,7 @@ export const name = "bash-terminal";
 export const inject = ["tools", "systemPrompt", "shellEnv", "subprocess", "settings", "sandbox", "sandboxPolicy"];
 
 /** The terminal backends this tool exposes, in catalog order. */
-export const SHELLS = ["powershell", "gitbash", "wsl"] as const;
+export const SHELLS = ["powershell", "gitbash", "msys2", "wsl"] as const;
 /** The backend used when the caller does not name one. */
 export const DEFAULT_SHELL: ShellId = "powershell";
 /** Settings namespace backing the user-chosen default terminal. */
@@ -90,6 +91,7 @@ export interface ConfigValues {
   maxTimeoutMs: number;
   pwshPath: string;
   gitBashPath: string;
+  msys2Path: string;
   wslPath: string;
 }
 
@@ -100,6 +102,7 @@ export const Config = z.object({
   maxTimeoutMs: z.number().default(MAX_TIMEOUT_MS),
   pwshPath: z.string().default(""),
   gitBashPath: z.string().default(""),
+  msys2Path: z.string().default(""),
   wslPath: z.string().default("")
 });
 
@@ -158,6 +161,37 @@ export function candidateGitBashPaths(env: NodeJS.ProcessEnv = process.env): str
   return candidates;
 }
 
+/**
+ * MSYS2 locations, in preference order: the real `bash.exe` under usr\bin
+ * first, then bin\bash.exe, and `msys2.exe` dead last.
+ *
+ * msys2.exe is NOT a usable backend for piped execution: it is the console-
+ * allocating Cygwin launcher, so a spawn with piped stdio returns exit 0 with
+ * zero bytes on both stdout and stderr (measured on this machine against
+ * MSYS2 with bash 5.3.15). Keeping it in the list only as a last-resort
+ * fallback preserves the path the config docs reference, but a working
+ * bash.exe always wins.
+ *
+ * MSYS2 uses the same Cygwin/MSYS2 runtime as Git Bash, so it cannot run
+ * under the DSH Windows ACL restricted-token sandbox.
+ */
+export function candidateMsys2Paths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const candidates = [
+    "C:\\msys64\\usr\\bin\\bash.exe",
+    "C:\\msys64\\bin\\bash.exe"
+  ];
+  for (const entry of (env.PATH ?? "").split(";")) {
+    const trimmed = entry.trim().replace(/^"|"$/g, "");
+    if (trimmed.length === 0) continue;
+    const lower = trimmed.toLowerCase();
+    if (lower.includes("msys64") || lower.includes("mingw64")) {
+      candidates.push(join(trimmed, "bash.exe"));
+    }
+  }
+  candidates.push("C:\\msys64\\msys2.exe"); // last resort: see the note above
+  return candidates;
+}
+
 export function defaultWslPath(env: NodeJS.ProcessEnv = process.env): string {
   const systemRoot = env.SystemRoot ?? "C:\\Windows";
   return join(systemRoot, "System32", "wsl.exe");
@@ -166,7 +200,7 @@ export function defaultWslPath(env: NodeJS.ProcessEnv = process.env): string {
 /** Executable paths, possibly undefined when a backend is not installed. */
 export type { ResolvedPaths };
 
-type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "wslPath">>;
+type PathConfig = Partial<Pick<ConfigValues, "pwshPath" | "gitBashPath" | "msys2Path" | "wslPath">>;
 
 export function resolveAllPaths(config: PathConfig = {}, env: NodeJS.ProcessEnv = process.env): ResolvedPaths {
   const pwsh = config.pwshPath && config.pwshPath.trim().length > 0
@@ -175,10 +209,13 @@ export function resolveAllPaths(config: PathConfig = {}, env: NodeJS.ProcessEnv 
   const gitbash = config.gitBashPath && config.gitBashPath.trim().length > 0
     ? config.gitBashPath
     : resolveFromCandidates(candidateGitBashPaths(env));
+  const msys2 = config.msys2Path && config.msys2Path.trim().length > 0
+    ? config.msys2Path
+    : resolveFromCandidates(candidateMsys2Paths(env));
   const wsl = config.wslPath && config.wslPath.trim().length > 0
     ? config.wslPath
     : defaultWslPath(env);
-  return { pwsh, gitbash, wsl };
+  return { pwsh, gitbash, msys2, wsl };
 }
 
 // ---- argv / env construction ------------------------------------------------
@@ -194,6 +231,11 @@ export function buildArgv(
       return [paths.pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command];
     case "gitbash":
       return [paths.gitbash, "-lc", command];
+    case "msys2":
+      // -lc, not -c: a login shell sources /etc/profile, which is what puts
+      // /usr/bin and /mingw64/bin on PATH. With a bare -c, `tr`, `sed`, `gcc`
+      // and friends are all "command not found".
+      return [paths.msys2, "-lc", command];
     case "wsl": {
       const distroArg = distro !== undefined && distro.trim().length > 0 ? ["-d", distro.trim()] : [];
       return [paths.wsl, ...distroArg, "-e", "bash", "-lc", command];
@@ -206,15 +248,45 @@ export function buildArgv(
 /**
  * Merge the DSH_* environment over the process environment. For WSL, only
  * variables explicitly listed in WSLENV cross the boundary, so every DSH_*
- * key is appended there (WSLENV is a : separated VAR[/flag] list).
+ * key is appended there — and the list is *layered onto* whatever WSLENV the
+ * host already had (Windows Terminal exports e.g. `WT_SESSION:WT_PROFILE_ID:`),
+ * never rebuilt from scratch: WSLENV is an allow-list, so dropping the
+ * inherited entries would silently stop them crossing into WSL.
+ *
+ * @param inheritedWslenv - the ambient WSLENV to layer onto. Callers that
+ *   replace the child environment wholesale (the PTY path) must pass
+ *   `process.env.WSLENV` explicitly, because the ambient value is not visible
+ *   through `dshEnv`.
  */
-export function buildEnv(shell: string, dshEnv?: Record<string, string>): Record<string, string | undefined> {
+export function buildEnv(
+  shell: string,
+  dshEnv?: Record<string, string>,
+  inheritedWslenv: string | undefined = process.env.WSLENV
+): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...ENV_OVERRIDES, ...dshEnv };
+  if (shell === "msys2") {
+    // Picks the MINGW64 environment, so /mingw64/bin (gcc, make, ...) joins
+    // PATH via /etc/profile. Without it MSYS2 defaults to the bare MSYS
+    // environment. An explicit caller-supplied value wins.
+    if (env.MSYSTEM === undefined) env.MSYSTEM = "MINGW64";
+  }
   if (shell === "wsl") {
     const keys = Object.keys(dshEnv ?? {});
     if (keys.length > 0) {
-      const existing = typeof env.WSLENV === "string" && env.WSLENV.length > 0 ? env.WSLENV : undefined;
-      env.WSLENV = [existing, keys.join(":")].filter(Boolean).join(":");
+      // An explicit WSLENV in dshEnv wins over the inherited one; otherwise the
+      // inherited value is the base. Either way the base is SPLIT into entries
+      // (the host value ends with a trailing ":", so string concatenation would
+      // produce a malformed empty entry) and the WSLENV key itself is excluded
+      // (it is a key of dshEnv too, and appending it would add a bogus entry).
+      const declared = Object.prototype.hasOwnProperty.call(dshEnv ?? {}, "WSLENV");
+      const base = declared
+        ? env.WSLENV
+        : (typeof inheritedWslenv === "string" && inheritedWslenv.length > 0 ? inheritedWslenv : env.WSLENV);
+      const parts = typeof base === "string" ? base.split(":") : [];
+      env.WSLENV = [...parts, ...keys.filter((k) => k !== "WSLENV").flatMap((k) => k.split(":"))]
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0)
+        .join(":");
     }
   }
   return env;
@@ -455,6 +527,7 @@ function renderProcessRead(read: ProcessRead): string {
 export const SHELL_DESCRIPTIONS: Record<ShellId, string> = {
   powershell: "Execute a PowerShell command (pwsh -NoLogo -NoProfile -NonInteractive -Command <command>) and return its stdout/stderr. PowerShell syntax; native Windows paths (C:\\...); environment variables via $env:NAME.",
   gitbash: "Execute a bash command (Git for Windows bash -lc <command>) and return its stdout/stderr. POSIX syntax; paths like /d/WorkSpace; PATH includes /usr/bin and /mingw64/bin so git, npm, ssh etc. work; environment variables via $NAME.",
+  msys2: "Execute a bash command (MSYS2 bash -lc <command>) and return its stdout/stderr. POSIX syntax; paths like /c/...; PATH includes /usr/bin and /mingw64/bin so git, npm, gcc, make etc. work; environment variables via $NAME. MSYS2 provides a full GCC/mingw64 toolchain.",
   wsl: "Execute a Linux bash command (wsl [-d <distro>] -e bash -lc <command>) and return its stdout/stderr. Linux syntax; Windows files under /mnt/d/...; environment variables via $NAME."
 };
 
@@ -471,7 +544,7 @@ export function toolDescription(backgroundEnabled: boolean, shell: string = DEFA
   const base = [
     `The user's chosen default terminal (Settings -> General -> Default terminal) is ${active}; commands run there.`,
     lead,
-    "Each call spawns a fresh shell: no state (cwd, variables, aliases) persists between calls - pass workdir instead of using cd. Non-zero exits are reported as [exit code: N] markers; investigate failures before moving on. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Commands run under the DSH sandbox: confined modes (read-only / workspace-write) are enforced through ctx.sandbox and deny fail-closed for PowerShell; danger-full-access, Git Bash, and WSL run unconfined."
+    "Each call spawns a fresh shell: no state (cwd, variables, aliases) persists between calls - pass workdir instead of using cd. Non-zero exits are reported as [exit code: N] markers; investigate failures before moving on. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. Commands run under the DSH sandbox: confined modes (read-only / workspace-write) are enforced through ctx.sandbox and deny fail-closed for PowerShell; danger-full-access, Git Bash, MSYS2, and WSL run unconfined."
   ].join(" ");
   if (!backgroundEnabled) return base;
   return base + " Set run_in_background: true for long-running commands: the call returns a job id immediately; read its output with job_output and stop it with job_kill. No timeout applies to background runs.";
@@ -509,9 +582,10 @@ export function validateArgs(args: Record<string, unknown>): ValidatedShellArgs 
  * per-call policy from ctx.sandboxPolicy, and — unless the call runs
  * danger-full-access — confine the spawn argv through ctx.sandbox. WSL is a
  * self-contained Linux VM and is not confined (its isolation IS the sandbox).
- * Git Bash is also not confined: DSH's Windows ACL restricted-token runner
- * cannot start Cygwin/MSYS2 (CreateFileMapping Win32 error 5), so attempting
- * to wrap it would abort every Git Bash command. A requested confined mode
+ * Git Bash and MSYS2 are also not confined: DSH's Windows ACL restricted-token
+ * runner cannot start Cygwin/MSYS2 (CreateFileMapping Win32 error 5), so
+ * attempting to wrap them would abort every Git Bash / MSYS2 command. A
+ * requested confined mode
  * with no usable backend throws the fail-closed SandboxUnavailableError,
  * exactly like the shipped executors.
  */
@@ -521,12 +595,14 @@ function confineSpawn(
   policy: SandboxPolicy,
   shell: string
 ): { argv: string[]; sandbox?: SandboxFacts } {
-  if (policy.mode === "danger-full-access" || shell === "wsl" || shell === "gitbash") {
+  if (policy.mode === "danger-full-access" || shell === "wsl" || shell === "gitbash" || shell === "msys2") {
     const sandbox = shell === "wsl"
       ? { mode: policy.mode, enforcement: "wsl-isolation" }
       : shell === "gitbash"
         ? { mode: policy.mode, enforcement: "gitbash-unconfined" }
-        : undefined;
+        : shell === "msys2"
+          ? { mode: policy.mode, enforcement: "msys2-unconfined" }
+          : undefined;
     return { argv, sandbox };
   }
   const confined = ctx.sandbox.confine(argv, policy);
@@ -630,7 +706,7 @@ export function apply(ctx: BashTerminalContext, config: Partial<ConfigValues> = 
   ctx.systemPrompt.section({
     name: "tool:bash-terminal",
     order: 105,
-    text: "Use the shell tool for terminal commands: it runs in the terminal the user chose in Settings -> General -> Default terminal (PowerShell, Git Bash, or WSL) and honors the DSH sandbox. Prefer it over the pwsh tool for everyday commands; keep the pwsh tool for cases that specifically need the sandboxed PowerShell surface."
+    text: "Use the shell tool for terminal commands: it runs in the terminal the user chose in Settings -> General -> Default terminal (PowerShell, Git Bash, MSYS2, or WSL) and honors the DSH sandbox. Prefer it over the pwsh tool for everyday commands; keep the pwsh tool for cases that specifically need the sandboxed PowerShell surface."
   });
 
   const toolName = "shell";
