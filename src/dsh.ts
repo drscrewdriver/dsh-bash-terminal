@@ -1,0 +1,68 @@
+// Value bridge to the @deepseek-ai/* peer packages.
+//
+// Peer packages ship their own .d.ts, but this plugin's contract with them is
+// a narrow, stable face (see ./dsh-types.ts). Every import passes through one
+// narrow cast here, so the plugin compiles against any 0.1.x peer whose
+// runtime behavior matches the face — no deep generic coupling, no version
+// drift leaking into the rewrite.
+
+import * as toolsNs from "@deepseek-ai/dsh-tools";
+import * as sandboxNs from "@deepseek-ai/dsh-sandbox";
+import { HarnessError } from "@deepseek-ai/dsh-llm";
+import { parseExitStatus } from "@deepseek-ai/dsh-shell";
+import { clampTimeout, deadline, timeoutOf } from "@deepseek-ai/dsh-timeout";
+import zDefault from "@deepseek-ai/schemastery";
+import type {
+  EscalationContext,
+  EscalationRequest,
+  JsonSchemaNode,
+  ToolDefinition,
+  ToolSpec
+} from "./dsh-types.js";
+
+export { HarnessError, parseExitStatus, clampTimeout, deadline, timeoutOf };
+
+/** Wrap a fully specified tool spec into a registrable tool definition. */
+export const defineTool = toolsNs.defineTool as unknown as <TValue>(spec: ToolSpec<TValue>) => ToolDefinition;
+
+/** Sentinel code stamped on aborted tool calls. */
+export const TOOL_ABORTED = toolsNs.TOOL_ABORTED as string;
+
+/** Escalation modes advertised by the official sandbox seam. */
+export const ESCALATION_TARGETS = sandboxNs.ESCALATION_TARGETS as readonly string[];
+
+/** Official sandbox escalation (mirrors dsh-tool-bash / dsh-tool-pwsh). */
+export const approveEscalation = sandboxNs.approveEscalation as unknown as (
+  request: EscalationRequest,
+  context: EscalationContext
+) => Promise<string>;
+
+/** Fail-closed validation of the sandbox_permissions / justification pair. */
+export const validateEscalationArgs = sandboxNs.validateEscalationArgs as unknown as (
+  permissions: unknown,
+  justification: unknown
+) => void;
+
+/** Marker appended to denied results so the UI can offer escalation. */
+export const sandboxDenialMarker = sandboxNs.sandboxDenialMarker as unknown as (mode: string) => string;
+
+/** Marker appended to denied results pointing at the escalation affordance. */
+export const escalationHintMarker = sandboxNs.escalationHintMarker as unknown as (subject: string) => string;
+
+/** Runtime config schema factory (schemastery fork). */
+export interface SchemasterySchema {
+  default(value: unknown): SchemasterySchema;
+}
+
+export interface Schemastery {
+  object(fields: Record<string, SchemasterySchema>): SchemasterySchema;
+  string(): SchemasterySchema;
+  number(): SchemasterySchema;
+  const(value: string): SchemasterySchema;
+  union(schemas: SchemasterySchema[]): SchemasterySchema;
+}
+
+export const z = zDefault as unknown as Schemastery;
+
+/** Re-exported for consumers that want to validate output schemas. */
+export type { JsonSchemaNode };
