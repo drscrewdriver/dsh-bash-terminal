@@ -1,4 +1,6 @@
 import { apply, internals, SHELLS, DEFAULT_SHELL } from "../lib/index.js";
+import { createTerminalRegistry, terminalTool } from "../lib/terminal.js";
+import { PassThrough } from "node:stream";
 import assert from "node:assert";
 
 // ---- mock ctx for apply() ----
@@ -79,6 +81,37 @@ assert.ok(spawnCalls[0].argv[0].toLowerCase().endsWith("bash.exe"), "msys2 runs 
 assert.ok(!spawnCalls[0].argv[0].toLowerCase().endsWith("msys2.exe"), "msys2.exe launcher is never the resolved backend");
 assert.deepStrictEqual(spawnCalls[0].argv.slice(1), ["-lc", "echo hi"]);
 assert.strictEqual(spawnCalls[0].env.MSYSTEM, "MINGW64", "MSYSTEM=MINGW64 injected for msys2");
+
+// 2c) the terminal tool builds its PTY env through the same buildEnv helper, so
+// an msys2 interactive session gets MSYSTEM=MINGW64 too (an inline duplicate
+// object silently dropped it, leaving /mingw64/bin off PATH).
+{
+  const ptySpecs = [];
+  const fakeHandle = () => ({
+    pid: 1,
+    output: new PassThrough(),
+    done: Promise.resolve({ exitCode: 0, signal: null }),
+    write: async () => {},
+    signalForeground: async () => 1,
+    terminate: async () => {},
+    inspectForeground: async () => undefined
+  });
+  const terminalCtx = {
+    shellEnv: { collect: () => ({ DSH_WEB_URL: "http://x" }) },
+    subprocess: { spawnTerminal: async (spec) => { ptySpecs.push(spec); return fakeHandle(); } },
+    effect: () => () => {},
+    get: () => undefined
+  };
+  const registry = createTerminalRegistry(terminalCtx);
+  const termPaths = { pwsh: "C:\\pwsh.exe", gitbash: "C:\\Git\\bin\\bash.exe", msys2: "C:\\msys64\\usr\\bin\\bash.exe", wsl: "C:\\Windows\\System32\\wsl.exe" };
+  const terminal = terminalTool(terminalCtx, registry, termPaths, () => "msys2");
+  assert.strictEqual(terminal.name, "terminal");
+  await terminal.execute({ action: "open" }, exec);
+  assert.strictEqual(ptySpecs.length, 1, "PTY opened");
+  assert.strictEqual(ptySpecs[0].env.MSYSTEM, "MINGW64", "msys2 PTY env carries MSYSTEM=MINGW64");
+  assert.strictEqual(ptySpecs[0].env.DSH_WEB_URL, "http://x", "DSH_* vars still merged into the PTY env");
+  assert.deepStrictEqual(ptySpecs[0].argv, ["C:\\msys64\\usr\\bin\\bash.exe", "-l"], "msys2 interactive argv unchanged");
+}
 
 // 3) user setting = wsl + distro + workdir
 userDefaultShell = "wsl";
