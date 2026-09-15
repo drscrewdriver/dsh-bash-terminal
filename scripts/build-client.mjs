@@ -33,7 +33,7 @@ await build({
 
 const core = readFileSync(join(root, "dist", "client.core.js"), "utf8");
 const wrapper = `window.__ModuleLoader__.load({
-	id: "dsh-bash-terminal",
+	id: "dsh-bash-terminal-ts",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

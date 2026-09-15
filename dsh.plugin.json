@@ -1,0 +1,22 @@
+{
+  "id": "dsh-bash-terminal-ts",
+  "name": "dsh-bash-terminal-ts",
+  "version": "0.2.5",
+  "description": {
+    "en": "One shell tool that runs commands through PowerShell, Git Bash, MSYS2 or WSL on Windows, with a user-chosen default terminal in the Web UI settings.",
+    "zh": "一个 shell 工具，可在 Windows 上通过 PowerShell / Git Bash / MSYS2 / WSL 执行命令，默认终端在 Web UI 设置中选择。"
+  },
+  "homepage": "https://github.com/drscrewdriver/dsh-bash-terminal-ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/drscrewdriver/dsh-bash-terminal-ts.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "dsh": ">=0.1.2-rc.1 <0.2.0-0"
+  },
+  "components": {
+    "host": "lib/index.js",
+    "client": "dist/client.js"
+  }
+}

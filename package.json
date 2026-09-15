@@ -1,17 +1,20 @@
 {
-  "name": "dsh-bash-terminal",
+  "name": "dsh-bash-terminal-ts",
   "version": "0.2.5",
-  "description": "DSH plugin: one shell tool that runs commands through PowerShell, Git Bash, MSYS2, or WSL on Windows, with a user-chosen default terminal in the Web UI settings.",
-  "author": "MAXeaglet",
+  "description": "DSH plugin: one shell tool that runs commands through PowerShell, Git Bash, MSYS2, or WSL on Windows, with a user-chosen default terminal in the Web UI settings. TypeScript rewrite of MAXeaglet/dsh-bash-terminal with working MSYS2/MINGW64 support.",
+  "author": "drscrewdriver",
+  "contributors": [
+    "MAXeaglet (original dsh-bash-terminal)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MAXeaglet/dsh-bash-terminal.git"
+    "url": "git+https://github.com/drscrewdriver/dsh-bash-terminal-ts.git"
   },
   "bugs": {
-    "url": "https://github.com/MAXeaglet/dsh-bash-terminal/issues"
+    "url": "https://github.com/drscrewdriver/dsh-bash-terminal-ts/issues"
   },
-  "homepage": "https://github.com/MAXeaglet/dsh-bash-terminal#readme",
+  "homepage": "https://github.com/drscrewdriver/dsh-bash-terminal-ts#readme",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -20,12 +23,15 @@
     "shell",
     "powershell",
     "git-bash",
+    "msys2",
+    "mingw64",
     "wsl",
     "windows",
     "typescript"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.1.2-rc.1 <0.2.0-0"
   },
   "publishConfig": {
     "access": "public"
@@ -47,7 +53,8 @@
     "tsconfig.test.json",
     "README.md",
     "LICENSE",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "dsh.plugin.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && node scripts/build-client.mjs && tsc -p tsconfig.test.json",
@@ -83,6 +90,21 @@
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-sandbox": "^0.1.2-rc.1",
     "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/dsh-settings": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-shell": { "optional": true },
+    "@deepseek-ai/dsh-timeout": { "optional": true },
+    "@deepseek-ai/dsh-client-store": { "optional": true },
+    "@deepseek-ai/dsh-client-locale": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-settings": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-primitives": { "optional": true },
+    "@deepseek-ai/dsh-sandbox": { "optional": true },
+    "react": { "optional": true }
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"

@@ -87,7 +87,7 @@ const globalWithWindow = globalThis as typeof globalThis & { window?: unknown };
 globalWithWindow.window = {
   __ModuleLoader__: {
     load: ({ id, factory }: { id: string; factory: (require: (name: string) => unknown) => unknown }) => {
-      assert.strictEqual(id, "dsh-bash-terminal");
+      assert.strictEqual(id, "dsh-bash-terminal-ts");
       exported = factory((name) => {
         if (name === "@deepseek-ai/dsh-client-store") return { defineStore: mockDefineStore };
         if (name === "react/jsx-runtime" || name === "react") return profileRequire(name);
