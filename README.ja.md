@@ -181,6 +181,8 @@ CI は `windows-latest` 上で同じ一式を実行します（`.github/workflow
 
 ## 技術実装
 
+動作要件：**Node.js 22+（24 を推奨）**、DSH 0.1.2+。
+
 ソースは TypeScript（`strict` + `noUncheckedIndexedAccess`）で、コンパイル成果物 `lib/`、`dist/` はリポジトリにコミットされています。DSH は `lib/index.js` をそのまま読み込むため、**インストール不要で使用できます**。
 
 require 側の依存（`@deepseek-ai/*` など 13 パッケージ）はすべて `peerDependencies` + `peerDependenciesMeta.optional` として宣言し、ホストが同梱するコピーとの重複インストールを避けています。

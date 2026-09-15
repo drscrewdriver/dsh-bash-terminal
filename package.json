@@ -1,6 +1,6 @@
 {
   "name": "dsh-bash-terminal-ts",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "DSH plugin: one shell tool that runs commands through PowerShell, Git Bash, MSYS2, or WSL on Windows, with a user-chosen default terminal in the Web UI settings. TypeScript rewrite of MAXeaglet/dsh-bash-terminal with working MSYS2/MINGW64 support.",
   "author": "drscrewdriver",
   "contributors": [
@@ -30,7 +30,7 @@
     "typescript"
   ],
   "engines": {
-    "node": ">=20",
+    "node": ">=22",
     "dsh": ">=0.1.2-rc.1 <0.2.0-0"
   },
   "publishConfig": {
@@ -125,7 +125,7 @@
     "@deepseek-ai/dsh-shell": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-timeout": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "^0.1.2-rc.1",
-    "@types/node": "^22.10.0",
+    "@types/node": "^24.13.4",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "esbuild": "^0.28.2",

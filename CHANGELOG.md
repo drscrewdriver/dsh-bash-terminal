@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.6 (2026-09-16)
+
+- **改名为 `dsh-bash-terminal-ts`**: 与上游 `MAXeaglet/dsh-bash-terminal` 区分。包名、`dsh.plugin.json`、`cordis.patch.yml` 的 `name` 与 client bundle id 同步更新；设置命名空间 `bash-terminal` 与 insert id `tool-bash-terminal` 保持不变，老用户的配置不受影响。
+- **适配 DSH 0.1.2**: `engines.dsh` 声明为 `>=0.1.2-rc.1 <0.2.0-0`，并新增 `dsh.plugin.json` 清单（components.host / components.client 入口、engines.dsh）。
+- **运行要求**: Node.js 22+（推荐 24），`engines.node` 由 `>=20` 提升为 `>=22`；CI 相应改跑 Node 24，action 升到 `checkout@v7` / `setup-node@v7`。
+- **CI 修好了（此前根本跑不起来）**: `push.branches` 只监听 `master`，而默认分支早已是 `main`，所以 push 从不触发 CI。修好触发条件后，暴露出两个一直被本地环境掩盖的问题：
+  - `@deepseek-ai/*` 只声明为 `peerDependencies` + `peerDependenciesMeta.optional`，干净环境 `npm install` 装不到任何东西，`tsc` 直接报 5 个 TS2307。改为同时声明进 `devDependencies`（peer 供宿主、dev 供构建）—— 本地能过是因为 `node_modules` 里本来就有。
+  - `test/client.ts` 用 `createRequire(~/.dsh/profiles/web/package.json)` 解析 react，只有本机装过 DSH web profile 才通过，CI 上 `Cannot find module 'react/jsx-runtime'`。改为优先从本仓库解析，profile 仅作兜底。
+- **文档**: README 重写，以 MSYS2 支持、TypeScript 源码、DSH 0.1.2 为主版三个差异点开篇；补英/日/韩三语版本与语言导航条。顺带修掉三处硬伤 —— 本地安装段落缺开围栏（整段渲染成正文）、MSYS2 入口前后矛盾（一处写 `msys2.exe -c`、另一处写不是）、22 处旧包名残留。`install.ps1` 改用 `$PSScriptRoot` 定位插件根目录，不再硬编码 `D:\WorkSpace\...`。
+
 ## 0.2.5 (2026-09-12)
 
 - **MSYS2 设置项修复**: MSYS2 此前只加进了服务端，Web UI 的「默认终端」下拉从没出现过它 —— 后端支持而前端选不了。`src/client.tsx` 补上 `msys2` 选项与 `shell.msys2` 双语文案（顺序 powershell / gitbash / msys2 / wsl）。

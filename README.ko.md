@@ -179,6 +179,8 @@ CI는 `windows-latest`에서 동일한 세트를 실행합니다(`.github/workfl
 
 ## 기술 구현
 
+실행 요구사항: **Node.js 22+ (24 권장)**, DSH 0.1.2+.
+
 소스는 TypeScript(`strict` + `noUncheckedIndexedAccess`)이며, 컴파일 산출물 `lib/`, `dist/`는 저장소에 함께 커밋되어 DSH가 `lib/index.js`로 바로 로드하므로 **설치 없이 사용할 수 있습니다**.
 
 require 측 의존성(`@deepseek-ai/*` 등 13개 패키지)은 모두 `peerDependencies` + `peerDependenciesMeta.optional`로 선언하여 호스트에 내장된 사본과 중복 설치되는 것을 피했습니다.

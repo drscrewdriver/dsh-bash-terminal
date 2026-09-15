@@ -179,6 +179,8 @@ CI 在 `windows-latest` 上跑同一套（`.github/workflows/test.yml`）。
 
 ## 技术实现
 
+运行要求：**Node.js 22+（推荐 24）**，DSH 0.1.2+。
+
 源码为 TypeScript（`strict` + `noUncheckedIndexedAccess`），编译产物 `lib/`、`dist/` 随仓库提交，DSH 直接按 `lib/index.js` 加载，**无需安装即可使用**。
 
 require 侧依赖（`@deepseek-ai/*` 等 13 个包）全部声明为 `peerDependencies` + `peerDependenciesMeta.optional`，避免与宿主自带的副本重复安装。

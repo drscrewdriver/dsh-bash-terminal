@@ -9,10 +9,10 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Install deps + build (tsc + client bundle + test compile)
         run: npm install --no-audit --no-fund && npm install react@^18 --no-save && npm run build
       - name: Run unit tests

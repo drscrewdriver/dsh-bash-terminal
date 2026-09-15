@@ -182,6 +182,8 @@ CI runs the same suite on `windows-latest` (`.github/workflows/test.yml`).
 
 ## Technical implementation
 
+Requirements: **Node.js 22+ (24 recommended)**, DSH 0.1.2+.
+
 The source is TypeScript (`strict` + `noUncheckedIndexedAccess`), and the compiled artifacts `lib/` and `dist/` are committed alongside the repository, so DSH loads `lib/index.js` directly and the plugin **works without a build step**.
 
 All require-side dependencies (13 packages, `@deepseek-ai/*` and friends) are declared as `peerDependencies` + `peerDependenciesMeta.optional`, avoiding a duplicate install alongside the host's own copies.
