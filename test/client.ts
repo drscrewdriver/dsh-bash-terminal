@@ -6,7 +6,20 @@ import os from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
 
+// react is resolved from this file's own package first, so the test runs in a
+// clean checkout (CI) where react is a devDependency. The DSH profile is only a
+// fallback, for a local dev install whose node_modules/@deepseek-ai/* are
+// junctions and whose react lives in the profile tree.
+const localRequire = createRequire(import.meta.url);
 const profileRequire = createRequire(join(os.homedir(), ".dsh", "profiles", "web", "package.json"));
+
+function resolveReact(name: string): unknown {
+  try {
+    return localRequire(name);
+  } catch {
+    return profileRequire(name);
+  }
+}
 
 // --- mock defineStore (shape mirrors dsh-client-store: { spec, create }) ---
 interface MockStore {
@@ -90,7 +103,7 @@ globalWithWindow.window = {
       assert.strictEqual(id, "dsh-bash-terminal-ts");
       exported = factory((name) => {
         if (name === "@deepseek-ai/dsh-client-store") return { defineStore: mockDefineStore };
-        if (name === "react/jsx-runtime" || name === "react") return profileRequire(name);
+        if (name === "react/jsx-runtime" || name === "react") return resolveReact(name);
         throw new Error("unexpected require: " + name);
       }) as ExportedClient;
     }
