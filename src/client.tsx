@@ -1,4 +1,4 @@
-// dsh-bash-terminal client plugin: a "Default terminal" preference row in the
+// dsh-bash-terminal-ts client plugin: a "Default terminal" preference row in the
 // Web UI General settings. The user picks powershell / gitbash / msys2 / wsl;
 // the host shell tool obeys that choice (the model cannot change it).
 //

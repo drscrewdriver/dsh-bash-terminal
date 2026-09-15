@@ -1,4 +1,4 @@
-// Build the browser client bundle for dsh-bash-terminal.
+// Build the browser client bundle for dsh-bash-terminal-ts.
 // Output: dist/client.js — a __ModuleLoader__.load({ id, factory }) wrapper
 // around the esbuild CJS bundle; shared deps (react, @deepseek-ai/*) resolve
 // through the loader's require.

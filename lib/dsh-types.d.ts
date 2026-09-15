@@ -241,7 +241,7 @@ export interface ApprovalSeam {
     request(input: unknown): Promise<unknown>;
 }
 /**
- * The structural context face dsh-bash-terminal programs against: the union
+ * The structural context face dsh-bash-terminal-ts programs against: the union
  * of every `ctx.*` member touched by src/index.ts and src/terminal.ts.
  */
 export interface BashTerminalContext {

@@ -1,4 +1,4 @@
-// dsh-bash-terminal: interactive terminal tool over the official PTY seam.
+// dsh-bash-terminal-ts: interactive terminal tool over the official PTY seam.
 // ctx.subprocess.spawnTerminal (node-pty under the hood) allocates a real
 // terminal; this module owns model-facing sessions: open / send / read /
 // signal (Ctrl+C etc.) / close. The backend follows the user's default

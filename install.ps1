@@ -1,19 +1,22 @@
-# dsh-bash-terminal - one-click install/uninstall for the web profile.
+# dsh-bash-terminal-ts - one-click install/uninstall for the web profile.
 # Usage:  powershell -ExecutionPolicy Bypass -File install.ps1 [install|uninstall]
+#
+# Run it from the plugin checkout (local dev) or from the installed package
+# directory; $PSScriptRoot is used as the plugin root so no path is hardcoded.
 
 param([ValidateSet("install", "uninstall")][string]$Action = "install")
 
 $ErrorActionPreference = "Stop"
-$pluginDir = "D:\WorkSpace\projects\dsh-bash-terminal"
+$pluginDir = if ($PSScriptRoot) { $PSScriptRoot } else { "D:\WorkSpace\projects\dsh-bash-terminal-ts" }
 $profileDir = Join-Path $env:USERPROFILE ".dsh\profiles\web"
-$pluginLink = Join-Path $profileDir "node_modules\dsh-bash-terminal"
+$pluginLink = Join-Path $profileDir "node_modules\dsh-bash-terminal-ts"
 $depLink = Join-Path $pluginDir "node_modules\@deepseek-ai"
 $patchFile = Join-Path $profileDir "cordis.patch.yml"
 $patchBlock = @'
-# ================= dsh-bash-terminal =================
+# ================= dsh-bash-terminal-ts =================
 - insert:
     - id: tool-bash-terminal
-      name: 'dsh-bash-terminal'
+      name: 'dsh-bash-terminal-ts'
 '@
 
 function New-Junction($path, $target) {
@@ -26,7 +29,7 @@ function New-Junction($path, $target) {
 # dsh-host-apiproxy; third-party settings namespaces are refused with
 # settings-not-exposed unless listed. install patches that allowlist.
 $apiproxy = Join-Path $profileDir "..\node_modules\@deepseek-ai\dsh-host-apiproxy\lib\index.js"
-$apiproxyBak = "$apiproxy.dsh-bash-terminal.bak"
+$apiproxyBak = "$apiproxy.dsh-bash-terminal-ts.bak"
 
 function Set-ApiProxyAllowlist {
   if (-not (Test-Path $apiproxy)) {
@@ -41,7 +44,7 @@ function Set-ApiProxyAllowlist {
   Copy-Item $apiproxy $apiproxyBak -Force
   $replacement = @"
 "web-search-deepseek",
-	"bash-terminal" // dsh-bash-terminal: user-chosen default terminal
+	"bash-terminal" // dsh-bash-terminal-ts: user-chosen default terminal
 ];
 "@
   $content = $content -replace '"web-search-deepseek"\r?\n\];', $replacement
@@ -72,11 +75,11 @@ if ($Action -eq "install") {
   Write-Host "[4/4] append mount row to cordis.patch.yml ..."
   if (Test-Path $patchFile) {
     $content = Get-Content $patchFile -Raw
-    if ($content -notmatch "dsh-bash-terminal") {
+    if ($content -notmatch "dsh-bash-terminal-ts") {
       Add-Content -Path $patchFile -Value ($patchBlock -replace "\r?\n$", "") -Encoding UTF8
       Write-Host "  patch appended: $patchFile"
     } else {
-      Write-Host "  patch already contains dsh-bash-terminal, skip."
+      Write-Host "  patch already contains dsh-bash-terminal-ts, skip."
     }
   } else {
     Write-Host "  WARN: $patchFile not found - add the mount row manually." -ForegroundColor Yellow
@@ -87,7 +90,7 @@ if ($Action -eq "install") {
   Write-Host "  1) close the running dsh web (Ctrl+C or kill the process)"
   Write-Host "  2) run:  dsh web"
   Write-Host "After restart, open Settings -> General: a 'Default terminal' dropdown"
-  Write-Host "(PowerShell / Git Bash / WSL) appears; the shell tool obeys it."
+  Write-Host "(PowerShell / Git Bash / MSYS2 / WSL) appears; the shell tool obeys it."
 } else {
   Write-Host "[1/3] remove links ..."
   if (Test-Path $pluginLink) { Remove-Item $pluginLink -Force -Recurse; Write-Host "  removed: $pluginLink" }
@@ -99,13 +102,13 @@ if ($Action -eq "install") {
   Write-Host "[3/3] remove mount block from cordis.patch.yml ..."
   if (Test-Path $patchFile) {
     $content = Get-Content $patchFile -Raw
-    $pattern = "(?s)[ \t]*# =+ dsh-bash-terminal =+.*?\n- insert:\n    - id: tool-bash-terminal\n      name: 'dsh-bash-terminal'\n*"
+    $pattern = "(?s)[ \t]*# =+ dsh-bash-terminal-ts =+.*?\n- insert:\n    - id: tool-bash-terminal\n      name: 'dsh-bash-terminal-ts'\n*"
     if ($content -match $pattern) {
       $content = $content -replace $pattern, ""
       Set-Content -Path $patchFile -Value $content -Encoding UTF8
       Write-Host "  patch block removed."
     } else {
-      Write-Host "  no dsh-bash-terminal block found in patch."
+      Write-Host "  no dsh-bash-terminal-ts block found in patch."
     }
   }
   Write-Host "Uninstalled. Restart dsh web; the shell tool disappears."
